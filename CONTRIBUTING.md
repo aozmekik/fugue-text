@@ -1,0 +1,50 @@
+# Contributing
+
+Thanks for your interest. This is a small project; issues and pull requests are welcome.
+
+## Setup
+
+Requires Node.js 22 or newer and npm.
+
+```sh
+git clone https://github.com/aozmekik/fugue-text.git
+cd fugue-text
+npm ci            # installs dev dependencies and builds dist/ (prepare script)
+```
+
+## Everyday commands
+
+| Command                                   | What it does                                                             |
+| ----------------------------------------- | ------------------------------------------------------------------------ |
+| `npm test`                                | Runs the test suite once (Vitest)                                        |
+| `npm run test:coverage`                   | Tests with v8 coverage; fails below the thresholds in `vitest.config.ts` |
+| `npm run lint`                            | ESLint (typescript-eslint strict-type-checked), zero warnings allowed    |
+| `npm run typecheck`                       | `tsc` for everything, and for `src/` alone without DOM or Node types     |
+| `npm run format` / `npm run format:check` | Prettier                                                                 |
+| `npm run build`                           | Builds `dist/` (ESM + type declarations) with tsup                       |
+| `npm run check`                           | Everything CI runs, in order                                             |
+| `npm run bench`                           | Editing-trace benchmark (fugue-text and Yjs)                             |
+| `npm run bench:scaling`                   | Cost per edit versus document size (takes about a minute)                |
+| `npm run example:relay`                   | End-to-end WebSocket relay demo                                          |
+| `npm run example:browser`                 | Serves the two-tab demo on http://127.0.0.1:8787                         |
+
+Property tests run 200 cases each by default. For a longer soak run:
+
+```sh
+FC_NUM_RUNS=5000 npx vitest run --testTimeout=0
+```
+
+When a property test fails, fast-check prints a seed and a shrunk counterexample; turn it into a
+regular unit test before fixing the bug.
+
+## Guidelines
+
+- Keep `src/` free of runtime dependencies and platform-specific APIs (`tsconfig.lib.json`
+  compiles it without DOM or Node types).
+- Every exported declaration needs a doc comment (enforced by ESLint).
+- Changes to the algorithm must keep the differential test against `test/support/reference.ts`
+  passing; that file is a deliberately naive transcription of the paper and should stay that way.
+- Changes to the binary formats need a new format version and must keep decoding old data.
+- Benchmark numbers in the README must come from a run you did; state the command, hardware and
+  Node.js version next to them.
+- Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/).
