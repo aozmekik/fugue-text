@@ -40,7 +40,7 @@ const MAGIC = [0x46, 0x55, 0x47, 0x53]; // "FUGS"
 const FORMAT_VERSION = 1;
 
 /** Serialises a snapshot to the binary state format. */
-export function encodeSnapshot(snapshot: DocumentSnapshot): Uint8Array {
+export function encodeSnapshot(snapshot: DocumentSnapshot): Uint8Array<ArrayBuffer> {
   const replicas = replicaTable(snapshot);
   const indexOf = new Map(replicas.map((replica, index) => [replica, index]));
   const out = new ByteWriter();

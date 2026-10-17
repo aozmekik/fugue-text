@@ -71,7 +71,7 @@ export function operationSpan(op: Operation): number {
 }
 
 /** Encodes an operation in the compact binary format. */
-export function encodeOperation(op: Operation): Uint8Array {
+export function encodeOperation(op: Operation): Uint8Array<ArrayBuffer> {
   const replicas = [op.replica];
   const indexOf = new Map([[op.replica, 0]]);
   const ref = (replica: string): number => {

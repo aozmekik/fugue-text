@@ -202,7 +202,7 @@ export class Text {
   }
 
   /** Encodes the full state (without buffered operations) in the compact binary format. */
-  save(): Uint8Array {
+  save(): Uint8Array<ArrayBuffer> {
     return encodeSnapshot(this.#snapshot());
   }
 
@@ -455,7 +455,7 @@ export class Text {
  * same whichever order the arguments are given in.
  * @throws {FugueTextError} `invalid-state` if either state is malformed.
  */
-export function mergeStates(a: Uint8Array, b: Uint8Array): Uint8Array {
+export function mergeStates(a: Uint8Array, b: Uint8Array): Uint8Array<ArrayBuffer> {
   const text = Text.load(a);
   text.merge(b);
   return text.save();
