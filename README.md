@@ -17,8 +17,9 @@ CRDTs, however, can _interleave_ concurrent insertions at the same position: two
 whose in-order traversal is the document. This library implements that algorithm (Fugue) with the
 engineering a real editor needs: fast index lookups on long documents, run-length encoding,
 causal delivery, state merging, compact encodings, stable cursors and change events. It has no
-runtime dependencies and uses no platform-specific APIs; it is tested on Node.js 22 and 24, and
-the browser example was checked in a Chromium-based browser.
+runtime dependencies and uses no platform-specific APIs. The test suite was run locally on
+Node.js 22.22.3 and is set up to run in CI on Node.js 22 and 24; the browser example was checked
+by hand in Chrome 152.
 
 ## Features
 
