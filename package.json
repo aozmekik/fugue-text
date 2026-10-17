@@ -1,0 +1,74 @@
+{
+  "name": "fugue-text",
+  "version": "0.1.0",
+  "description": "Fugue text CRDT for local-first collaborative editing: minimal interleaving, run-length encoded, zero dependencies.",
+  "keywords": [
+    "crdt",
+    "fugue",
+    "collaborative-editing",
+    "local-first",
+    "text",
+    "sequence-crdt"
+  ],
+  "license": "MIT",
+  "author": "Ahmed Semih Özmekik (https://github.com/aozmekik)",
+  "homepage": "https://github.com/aozmekik/fugue-text#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aozmekik/fugue-text.git"
+  },
+  "bugs": {
+    "url": "https://github.com/aozmekik/fugue-text/issues"
+  },
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsup",
+    "prepare": "tsup",
+    "typecheck": "tsc -p tsconfig.json && tsc -p tsconfig.lib.json",
+    "lint": "eslint . --max-warnings 0",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "bench": "node --expose-gc --import tsx bench/trace.ts",
+    "bench:scaling": "node --expose-gc --import tsx bench/scaling.ts",
+    "examples:build": "esbuild examples/broadcast-channel/main.ts --bundle --format=esm --target=es2022 --sourcemap --outfile=examples/broadcast-channel/bundle/main.js",
+    "example:browser": "npm run examples:build && esbuild --serve=8787 --servedir=examples/broadcast-channel",
+    "example:relay": "tsx examples/websocket-relay/demo.ts",
+    "check": "npm run format:check && npm run lint && npm run typecheck && npm run test:coverage && npm run build && npm run examples:build && npm run example:relay"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^22.20.5",
+    "@types/ws": "^8.18.2",
+    "@vitest/coverage-v8": "^5.0.5",
+    "esbuild": "^0.28.2",
+    "eslint": "^10.13.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-jsdoc": "^65.3.11",
+    "fast-check": "^4.10.2",
+    "prettier": "^3.9.10",
+    "tsup": "^9.0.0",
+    "tsx": "^4.23.15",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.71.2",
+    "vitest": "^5.0.5",
+    "ws": "^8.22.0",
+    "yjs": "^13.6.33"
+  }
+}

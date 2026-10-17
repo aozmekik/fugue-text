@@ -1,0 +1,6 @@
+dist/
+coverage/
+examples/**/bundle/
+bench/out/
+bench/traces/
+package-lock.json

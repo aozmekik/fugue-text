@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+examples/**/bundle/
+*.tsbuildinfo
+
+# Test and coverage output
+coverage/
+.vitest/
+
+# Caches
+.cache/
+.eslintcache
+.prettiercache
+
+# Benchmark scratch output (committed results live in bench/RESULTS.md)
+bench/out/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Environment and secrets
+.env
+.env.*
+
+# Editors and OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
