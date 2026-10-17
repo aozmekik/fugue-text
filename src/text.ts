@@ -29,6 +29,9 @@ import type {
 
 let listOf: (text: Text) => FugueList;
 
+/** Shared by every operation without new dependencies (the common case while typing). */
+const NO_DEPS: VersionVector = Object.freeze({});
+
 /**
  * One replica of a collaboratively edited plain-text document, implemented with the Fugue list
  * CRDT (Weidner & Kleppmann, arXiv:2305.00583).
@@ -355,6 +358,7 @@ export class Text {
   }
 
   #takeDeps(): VersionVector {
+    if (this.#dirty.size === 0) return NO_DEPS;
     const deps: [string, number][] = [];
     // Never contains this replica: its own version only grows through local edits.
     for (const replica of this.#dirty) deps.push([replica, this.#version.get(replica) as number]);

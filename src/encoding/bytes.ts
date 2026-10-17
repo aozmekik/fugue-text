@@ -176,11 +176,26 @@ export function encodeWtf8(value: string): Uint8Array {
  * above U+10FFFF and surrogate pairs encoded as two separate three-byte sequences.
  */
 export function decodeWtf8(bytes: Uint8Array, fail: FailFn): string {
+  // Short strings (replica IDs, keystrokes) are usually ASCII; decoding them by hand avoids the
+  // platform decoder's per-call overhead, which dominates at this size.
+  if (bytes.length <= 32) {
+    const ascii = decodeAscii(bytes);
+    if (ascii !== undefined) return ascii;
+  }
   try {
     return utf8StrictDecoder.decode(bytes);
   } catch {
     return decodeGeneralised(bytes, fail);
   }
+}
+
+function decodeAscii(bytes: Uint8Array): string | undefined {
+  let result = '';
+  for (const byte of bytes) {
+    if (byte >= 0x80) return undefined;
+    result += String.fromCharCode(byte);
+  }
+  return result;
 }
 
 function decodeGeneralised(bytes: Uint8Array, fail: FailFn): string {
