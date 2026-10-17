@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>fugue-text: two-tab demo</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font-family: system-ui, sans-serif;
+      }
+      body {
+        margin: 0 auto;
+        max-width: 48rem;
+        padding: 1.5rem 1rem;
+      }
+      textarea {
+        box-sizing: border-box;
+        width: 100%;
+        min-height: 20rem;
+        padding: 0.75rem;
+        font:
+          1rem/1.5 ui-monospace,
+          monospace;
+      }
+      #status {
+        color: GrayText;
+        font-size: 0.875rem;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>fugue-text over BroadcastChannel</h1>
+    <p>
+      Open this page in two or more tabs and type in each. Every tab is a separate replica; edits
+      travel as binary operations through a <code>BroadcastChannel</code>. Your caret stays put
+      while others type.
+    </p>
+    <textarea spellcheck="false" aria-label="Shared document"></textarea>
+    <p id="status" role="status"></p>
+    <script type="module" src="./bundle/main.js"></script>
+  </body>
+</html>
