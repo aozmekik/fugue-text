@@ -18,7 +18,13 @@
 
 import { invalidOperation } from './errors.js';
 import { ByteReader, ByteWriter, type FailFn } from './encoding/bytes.js';
-import { isCounter, isReplicaId } from './internal/ids.js';
+import {
+  isCounter,
+  isElementId,
+  isElementIdRange,
+  isObject,
+  isReplicaId,
+} from './internal/guards.js';
 import type {
   DeleteOperation,
   ElementId,
@@ -176,18 +182,4 @@ export function decodeOperation(bytes: Uint8Array): Operation {
   input.end();
   assertOperation(op);
   return op;
-}
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function isElementId(value: unknown): value is ElementId {
-  return isObject(value) && isReplicaId(value['replica']) && isCounter(value['counter']);
-}
-
-function isElementIdRange(value: unknown): value is ElementIdRange {
-  if (!isElementId(value)) return false;
-  const length = (value as unknown as Record<string, unknown>)['length'];
-  return isCounter(length) && length > 0 && Number.isSafeInteger(value.counter + length);
 }

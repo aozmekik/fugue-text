@@ -342,21 +342,65 @@ export class FugueList {
     }
   }
 
-  /** The content of `run` from `from` onwards, as pieces of uniform visibility. */
-  piecesOf(run: Run, from: number): Piece[] {
-    const pieces: Piece[] = [];
-    for (const segment of run.segments) {
-      const end = segment.offset + segment.length;
-      if (end <= from) continue;
-      const start = Math.max(segment.offset, from);
-      pieces.push({ length: end - start, text: segment.text?.slice(start - segment.offset) });
-    }
-    return pieces;
+  /** The element that top-level runs hang off (the virtual root). */
+  get rootElem(): Elem {
+    return { run: this.root, offset: 0 };
   }
 
-  /** Every segment in document order. */
-  segments(): IterableIterator<Segment> {
-    return this.#rope[Symbol.iterator]();
+  /** The ID of the parent of `run`'s first element, or `null` for the root. */
+  parentIdOf(run: Run): ElementId | null {
+    const parent = run.parent as Run;
+    return parent === this.root
+      ? null
+      : { replica: parent.replica, counter: parent.counter + run.parentOffset };
+  }
+
+  /**
+   * Throws `invalid-state` unless this list can absorb another one: every element the other list
+   * has below `known(replica)` (this list's version vector) must be present here too. `runs` are
+   * the other list's runs (see {@link runsInCausalOrder}).
+   */
+  checkMergeable(runs: readonly Run[], known: (replica: string) => number): void {
+    for (const run of runs) {
+      const have = clamp(known(run.replica) - run.counter, run.length);
+      // This covers parents too: a parent below `known` lies in some run's known prefix.
+      if (
+        have > 0 &&
+        !this.hasRange({ replica: run.replica, counter: run.counter, length: have })
+      ) {
+        invalidState(`elements of ${run.replica} disagree with this document`);
+      }
+    }
+  }
+
+  /**
+   * Adds everything `other` has that this list lacks: missing elements, integrated run by run in
+   * causal order (`runs`, from {@link runsInCausalOrder}), then tombstones. Because both lists are
+   * causally closed, this list holds exactly the elements of each replica below
+   * `known(replica)`. Call {@link checkMergeable} first.
+   */
+  mergeFrom(
+    other: FugueList,
+    runs: readonly Run[],
+    known: (replica: string) => number,
+    changes?: TextChange[],
+  ): void {
+    for (const run of runs) {
+      const have = clamp(known(run.replica) - run.counter, run.length);
+      if (have === run.length) continue;
+      const parentId =
+        have > 0
+          ? { replica: run.replica, counter: run.counter + have - 1 }
+          : other.parentIdOf(run);
+      const parent = parentId === null ? this.rootElem : (this.resolve(parentId) as Elem);
+      const side = have > 0 ? 'right' : run.side;
+      this.integrate(run.replica, run.counter + have, parent, side, piecesOf(run, have), changes);
+    }
+    for (const segment of other.#rope) {
+      if (segment.text !== undefined) continue;
+      const counter = segment.run.counter + segment.offset;
+      this.deleteRange({ replica: segment.run.replica, counter, length: segment.length }, changes);
+    }
   }
 
   /**
@@ -367,26 +411,16 @@ export class FugueList {
     const records: SnapshotRecord[] = [];
     for (const segment of this.#rope) {
       const { run, offset } = segment;
-      let parent: ElementId | null;
-      let side: Side;
-      if (offset > 0) {
-        parent = { replica: run.replica, counter: run.counter + offset - 1 };
-        side = 'right';
-      } else {
-        const parentRun = run.parent as Run;
-        parent =
-          parentRun === this.root
-            ? null
-            : { replica: parentRun.replica, counter: parentRun.counter + run.parentOffset };
-        side = run.side;
-      }
+      const continues = offset > 0;
       records.push({
         replica: run.replica,
         counter: run.counter + offset,
         length: segment.length,
         text: segment.text,
-        parent,
-        side,
+        parent: continues
+          ? { replica: run.replica, counter: run.counter + offset - 1 }
+          : this.parentIdOf(run),
+        side: continues ? 'right' : run.side,
       });
     }
     return records;
@@ -724,6 +758,23 @@ export class FugueList {
     this.#rope.remove(segment);
     segment.run.segments.splice(this.#segmentIndex(segment), 1);
   }
+}
+
+/** `value` clamped to `[0, max]`. */
+function clamp(value: number, max: number): number {
+  return Math.min(Math.max(value, 0), max);
+}
+
+/** The content of `run` from offset `from` onwards, as pieces of uniform visibility. */
+function piecesOf(run: Run, from: number): Piece[] {
+  const pieces: Piece[] = [];
+  for (const segment of run.segments) {
+    const end = segment.offset + segment.length;
+    if (end <= from) continue;
+    const start = Math.max(segment.offset, from);
+    pieces.push({ length: end - start, text: segment.text?.slice(start - segment.offset) });
+  }
+  return pieces;
 }
 
 /** The ID of an element (never the root). */

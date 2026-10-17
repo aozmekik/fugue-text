@@ -1,13 +1,7 @@
 import { randomBytes } from './platform.js';
 
-const REPLICA_ID_PATTERN = /^[\x21-\x7e]{1,64}$/;
 const RANDOM_ID_ALPHABET = 'abcdefghijklmnopqrstuvwxyz234567';
 const RANDOM_ID_LENGTH = 12;
-
-/** Returns whether `value` is a well-formed replica ID (1 to 64 printable ASCII characters). */
-export function isReplicaId(value: unknown): value is string {
-  return typeof value === 'string' && REPLICA_ID_PATTERN.test(value);
-}
 
 /** Generates a random 12-character replica ID (60 bits of entropy). */
 export function randomReplicaId(): string {
@@ -29,9 +23,4 @@ export function compareIds(
 ): number {
   if (replicaA !== replicaB) return replicaA < replicaB ? -1 : 1;
   return counterA - counterB;
-}
-
-/** Returns whether `value` is a non-negative safe integer. */
-export function isCounter(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 }

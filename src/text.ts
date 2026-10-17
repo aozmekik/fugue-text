@@ -5,11 +5,11 @@ import {
   snapshotFromJSON,
   snapshotToJSON,
 } from './encoding/state.js';
-import { FugueTextError, invalidOperation, invalidState } from './errors.js';
-import { isCounter, isReplicaId, randomReplicaId } from './internal/ids.js';
+import { FugueTextError, invalidOperation } from './errors.js';
+import { isAnchor, isReplicaId } from './internal/guards.js';
+import { randomReplicaId } from './internal/ids.js';
 import { FugueList, idOf } from './internal/list.js';
 import { reportError } from './internal/platform.js';
-import type { Elem } from './internal/tree.js';
 import { assertOperation, operationSpan } from './operations.js';
 import type {
   Anchor,
@@ -20,7 +20,6 @@ import type {
   InsertOperation,
   Operation,
   ReplicaId,
-  Side,
   TextChange,
   TextOptions,
   TextStateJSON,
@@ -229,59 +228,11 @@ export class Text {
       );
     }
     const before = new Map(this.#version);
-    const list = this.#list;
-    const knownPrefix = (replica: string, counter: number, length: number): number =>
-      Math.min(Math.max((before.get(replica) ?? 0) - counter, 0), length);
-
-    // Validate first so that a rejected state leaves this document untouched.
-    for (const run of runs) {
-      const known = knownPrefix(run.replica, run.counter, run.length);
-      // Parents are covered too: a parent below `before` belongs to some run's known prefix.
-      if (
-        known > 0 &&
-        !list.hasRange({ replica: run.replica, counter: run.counter, length: known })
-      ) {
-        invalidState(`elements of ${run.replica} disagree with this document`);
-      }
-    }
-
+    const known = (replica: string): number => before.get(replica) ?? 0;
+    this.#list.checkMergeable(runs, known); // a rejected state leaves this document untouched
     const changes = this.#listeners.size > 0 ? [] : undefined;
     try {
-      for (const run of runs) {
-        const known = knownPrefix(run.replica, run.counter, run.length);
-        if (known === run.length) continue;
-        let parent: Elem;
-        let side: Side;
-        if (known > 0) {
-          parent = list.resolve({ replica: run.replica, counter: run.counter + known - 1 }) as Elem;
-          side = 'right';
-        } else if (run.parent === other.root) {
-          parent = { run: list.root, offset: 0 };
-          side = 'right';
-        } else {
-          parent = list.resolve(
-            idOf({ run: run.parent as Elem['run'], offset: run.parentOffset }),
-          ) as Elem;
-          side = run.side;
-        }
-        list.integrate(
-          run.replica,
-          run.counter + known,
-          parent,
-          side,
-          other.piecesOf(run, known),
-          changes,
-        );
-      }
-      for (const segment of other.segments()) {
-        if (segment.text !== undefined) continue;
-        const range = {
-          replica: segment.run.replica,
-          counter: segment.run.counter + segment.offset,
-          length: segment.length,
-        };
-        list.deleteRange(range, changes);
-      }
+      this.#list.mergeFrom(other, runs, known, changes);
       for (const [replica, version] of snapshot.version) {
         if (version > (before.get(replica) ?? 0)) {
           this.#version.set(replica, version);
@@ -321,6 +272,8 @@ export class Text {
    * has not received yet. Anchors to deleted characters resolve to where the character was.
    */
   resolveAnchor(anchor: Anchor): number | undefined {
+    // Anchors often arrive over the network, so check them at runtime.
+    if (!isAnchor(anchor)) throw new TypeError('malformed anchor');
     switch (anchor.type) {
       case 'start':
         return 0;
@@ -328,15 +281,11 @@ export class Text {
         return this.length;
       case 'element': {
         const { id, bias } = anchor;
-        if (!isReplicaId(id.replica) || !isCounter(id.counter))
-          throw new TypeError('malformed anchor');
         const elem = this.#list.resolve(id);
         if (elem === undefined) return undefined;
         const { index, visible } = this.#list.locate(elem);
         return bias === 'left' && visible ? index + 1 : index;
       }
-      default:
-        throw new TypeError('malformed anchor');
     }
   }
 

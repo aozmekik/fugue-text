@@ -23,7 +23,7 @@
  */
 
 import { invalidState } from '../errors.js';
-import { isCounter, isReplicaId } from '../internal/ids.js';
+import { isCounter, isElementId, isObject, isReplicaId } from '../internal/guards.js';
 import type { SnapshotRecord } from '../internal/list.js';
 import type { ElementId, Side, StateRecordJSON, TextStateJSON } from '../types.js';
 import { ByteReader, ByteWriter, type FailFn } from './bytes.js';
@@ -198,10 +198,8 @@ export function snapshotFromJSON(value: unknown): DocumentSnapshot {
     if (side !== 'left' && side !== 'right') fail('malformed side');
     let parentId: ElementId | null = null;
     if (parent !== null) {
-      if (!isObject(parent) || !isReplicaId(parent['replica']) || !isCounter(parent['counter'])) {
-        fail('malformed parent');
-      }
-      parentId = { replica: parent['replica'], counter: parent['counter'] };
+      if (!isElementId(parent)) fail('malformed parent');
+      parentId = { replica: parent.replica, counter: parent.counter };
     }
     if (text !== undefined && (typeof text !== 'string' || text.length !== length)) {
       fail('text length does not match the record');
@@ -248,8 +246,4 @@ function isContinuation(record: SnapshotRecord): boolean {
     record.parent?.replica === record.replica &&
     record.parent.counter === record.counter - 1
   );
-}
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
