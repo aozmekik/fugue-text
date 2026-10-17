@@ -32,9 +32,9 @@ export interface Piece {
 }
 
 /**
- * One maximal run of consecutive elements in document order, as stored in encoded states.
- * Continuation records (whose parent is the previous counter of the same replica, on the right)
- * extend the run that contains their parent.
+ * A maximal slice of a run that is contiguous in document order and uniformly visible or
+ * deleted, as stored in encoded states. Continuation records (whose parent is the previous counter
+ * of the same replica, on the right) extend the run that contains their parent.
  */
 export interface SnapshotRecord {
   /** Replica that inserted the elements. */
