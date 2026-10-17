@@ -96,11 +96,15 @@ const opJsonBytes = ops.reduce((n, op) => n + Buffer.byteLength(JSON.stringify(o
 
 const rows: string[][] = [
   ['Local replay, edits/s (median)', opsPerSecond(fugueLocal), opsPerSecond(yjsLocal)],
-  ['Remote replay, edits/s (median)', opsPerSecond(fugueRemote), opsPerSecond(yjsRemote)],
   [
-    'Remote replay incl. binary decode, edits/s',
+    'Remote replay from binary messages, edits/s (median)',
     opsPerSecond(fugueRemoteBinary),
-    'n/a (same as above)',
+    opsPerSecond(yjsRemote),
+  ],
+  [
+    'Remote replay from in-memory operation objects, edits/s (median)',
+    opsPerSecond(fugueRemote),
+    'n/a (updates are binary)',
   ],
   ['Save full state, ms (median)', ms(fugueSave), ms(yjsSave)],
   ['Load full state, ms (median)', ms(fugueLoad), ms(yjsLoad)],
