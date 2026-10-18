@@ -164,7 +164,7 @@ Design decisions and their trade-offs are recorded as ADRs:
 
 ## Correctness
 
-`npm test` runs 113 tests in 12 files (Vitest 5.0.5, Node.js 22.22.3, Apple M1 Pro), including:
+`npm test` runs 119 tests in 12 files (Vitest 5.0.5, Node.js 22.22.3, Apple M1 Pro), including:
 
 - **Convergence**: 2 to 5 replicas make random concurrent edits; operations are delivered in
   random order, duplicated, round-tripped through JSON and the binary codec, and mixed with state
@@ -183,27 +183,37 @@ Design decisions and their trade-offs are recorded as ADRs:
   state-based sync agrees with operation-based sync.
 - **Codecs**: round trips of arbitrary UTF-16 strings and of the largest allowed counters,
   fuzzing of both decoders with random and corrupted bytes (they may only throw
-  `FugueTextError`), and specific malformed states.
+  `FugueTextError`), and specific malformed states and operations, each with its error message.
 - **Structure**: model-based tests of the B-tree rope and of the B+tree index, and an invariant
   check (rope order equals the tree traversal, maximal segments and runs, sorted siblings, every
-  index consistent with the runs) after every property-test step.
+  index consistent with the runs) after every property-test step. Placement cases that random
+  inputs reach only sometimes (such as concurrent right children in the middle of a run) also
+  have their own tests, which deliver the operations in every possible order.
 
-`npm run test:coverage` on the same setup reports 98.99% of statements, 96.71% of branches and
-100% of functions and lines in `src/` (excluding `src/types.ts`, which only declares types).
-Property tests draw new random inputs on each run, so coverage varies by a fraction of a percent
-between runs. Each property runs 200 cases by default. A soak run with
-`FC_NUM_RUNS=20000 npx vitest run --testTimeout=0` (20,000 cases per property, 3 min 26 s on the
-same machine while other jobs were running) also passed.
+`npm run test:coverage` on the same setup reports 99.64% of statements (1,679 of 1,685), 98.24%
+of branches (838 of 853) and 100% of functions and lines in `src/` (excluding `src/types.ts`,
+which only declares types). The figures were the same on each of 8 runs, although property tests
+draw new random inputs every time, because the branches that random inputs reached in only some
+runs also have deterministic tests. The 15 uncovered branches are defensive: fallbacks for values
+that are always present, failure paths of internal invariant checks, the rethrow of errors other
+than `FugueTextError`, and guards for states the code never creates.
+
+Each property runs 200 cases by default, except the three decoder fuzzers in
+[`test/encoding.test.ts`](test/encoding.test.ts), which run five times as many (1,000) because
+each case is cheap. `FC_NUM_RUNS` sets the base count: a soak run with
+`FC_NUM_RUNS=20000 npx vitest run --testTimeout=0` (20,000 cases per property and 100,000 per
+decoder fuzzer; 2 min 11 s on the same machine, at a load average of about 10 from other jobs)
+also passed.
 
 ## Benchmarks
 
 All numbers below come from one run of each benchmark on 2026-10-18, on an Apple M1 Pro (8 cores,
 16 GB) with macOS 26.6.2, Node.js 22.22.3 (V8 12.4; the benchmarks run TypeScript through tsx
 4.23.15) and Yjs 13.6.33. The machine was shared with other jobs: the 1-minute load average was
-about 19 when `npm run bench` started and 16 when `npm run bench:scaling` started, and it
-fluctuated during the runs. Timings are rounded to two or three significant figures and come
-with the range over the measured runs; sizes are exact. Each benchmark writes every measured
-duration to `bench/out/` (git-ignored).
+about 7 when `npm run bench` started and 6 when `npm run bench:scaling` started, and it
+fluctuated during the runs. Timings and heap sizes are rounded to two or three significant
+figures and come with the range over the measured runs. Encoded sizes are exact and the same on
+every run. Each benchmark writes every measured value to `bench/out/` (git-ignored).
 
 ### Real editing trace
 
@@ -211,26 +221,29 @@ duration to `bench/out/` (git-ignored).
 [automerge-paper trace](bench/traces/README.md) (259,778 single-character edits made while writing
 a LaTeX paper; final length 104,852 characters; CC BY 4.0, Martin Kleppmann) on one replica,
 then delivers the resulting operations to a second replica. Each timing is the median of 7 runs
-after 2 warm-up runs, with the range in parentheses. Retained heap is measured in a fresh
-process per library after a forced GC.
+after 2 warm-up runs, with the range in parentheses. Retained heap is the median over 7 fresh
+processes per library, each measured after a forced GC (1 MB = 10^6 bytes).
 
-| Metric                                         | fugue-text                          | Yjs 13.6.33                         |
-| ---------------------------------------------- | ----------------------------------- | ----------------------------------- |
-| Local replay                                   | 82 ms (81 to 84), 3.2 M edits/s     | 1,080 ms (1,020 to 1,370), 0.24 M/s |
-| Remote replay from binary messages             | 324 ms (319 to 336), 0.80 M edits/s | 1,290 ms (964 to 3,160), 0.20 M/s   |
-| Remote replay from in-memory operation objects | 104 ms (103 to 106), 2.5 M edits/s  | n/a (updates are binary)            |
-| Save full state                                | 4.6 ms (2.6 to 8.2)                 | 3.6 ms (2.4 to 17.9)                |
-| Load full state                                | 21 ms (20 to 26)                    | 14 ms (6.7 to 23)                   |
-| Encoded state, bytes                           | 176,415                             | 223,414 (v2 encoding: 159,921)      |
-| Encoded state after gzip, bytes                | 80,574                              | 99,895                              |
-| State as JSON, bytes                           | 1,539,776                           | n/a                                 |
-| Binary operation or update, bytes per edit     | 18.8                                | 14.7                                |
-| Retained heap after replay                     | 3.6 MB (3,622,168 bytes)            | 3.4 MB (3,446,848 bytes)            |
+| Metric                                         | fugue-text                            | Yjs 13.6.33                         |
+| ---------------------------------------------- | ------------------------------------- | ----------------------------------- |
+| Local replay                                   | 88.7 ms (87.0 to 99.5), 2.9 M edits/s | 1,130 ms (1,060 to 1,350), 0.23 M/s |
+| Remote replay from binary messages             | 339 ms (327 to 357), 0.77 M edits/s   | 937 ms (884 to 955), 0.28 M/s       |
+| Remote replay from in-memory operation objects | 109 ms (108 to 115), 2.4 M edits/s    | n/a (updates are binary)            |
+| Save full state                                | 4.2 ms (2.8 to 8.1)                   | 3.1 ms (2.2 to 12.0)                |
+| Load full state                                | 20.1 ms (17.7 to 23.2)                | 9.1 ms (6.6 to 18.4)                |
+| Encoded state, bytes                           | 176,415                               | 223,414 (v2 encoding: 159,921)      |
+| Encoded state after gzip, bytes                | 80,574                                | 99,895                              |
+| State as JSON, bytes                           | 1,539,776                             | n/a                                 |
+| Binary operation or update, bytes per edit     | 18.8                                  | 14.7                                |
+| Retained heap after replay                     | 3.61 MB (3.55 to 3.63)                | 3.46 MB (3.13 to 3.47)              |
 
 The trace produced 6,288 runs and 12,487 segments in fugue-text. Between runs, save times
-varied by a factor of about 3 for fugue-text and 7 for Yjs, and Yjs load times by a factor of 3,
-so read the save and load rows as orders of magnitude, not as a ranking. Decoding binary operations dominates the binary remote replay: applying the same
-operations as objects is about 3 times faster.
+varied by a factor of about 3 for fugue-text and 5 for Yjs, and Yjs load times by a factor of 3,
+so read the save and load rows as orders of magnitude, not as a ranking. The retained heap
+varied by 2% between processes for fugue-text and by 11% for Yjs (two of the seven Yjs
+processes retained about 3.13 MB, the other five about 3.46 MB). Decoding binary operations
+dominates the binary remote replay: applying the same operations as objects is about 3 times
+faster.
 
 ### Cost per edit versus document size (synthetic)
 
@@ -244,24 +257,24 @@ what the B-tree avoids.
 
 Typing bursts, µs per edit:
 
-| Document length | fugue-text local   | fugue-text remote | Yjs local | Naive reference |
-| --------------- | ------------------ | ----------------- | --------- | --------------- |
-| 1,005           | 0.82 (0.68 to 1.1) | 0.89              | 4.7       | 46              |
-| 10,002          | 0.95 (0.90 to 1.0) | 1.3               | 7.0       | 580             |
-| 100,004         | 1.5 (1.4 to 1.7)   | 2.0               | 34        | not run (O(n))  |
-| 1,000,005       | 4.1 (4.0 to 4.7)   | 5.8               | 390       | not run (O(n))  |
+| Document length | fugue-text local    | fugue-text remote | Yjs local | Naive reference |
+| --------------- | ------------------- | ----------------- | --------- | --------------- |
+| 1,005           | 0.83 (0.78 to 1.2)  | 0.91              | 3.6       | 48              |
+| 10,002          | 0.95 (0.93 to 0.98) | 1.3               | 5.7       | 445             |
+| 100,004         | 1.8 (1.4 to 2.5)    | 2.7               | 38        | not run (O(n))  |
+| 1,000,005       | 3.9 (3.8 to 4.7)    | 5.1               | 330       | not run (O(n))  |
 
 One paste, µs per edit:
 
 | Document length | fugue-text local | fugue-text remote | Yjs local |
 | --------------- | ---------------- | ----------------- | --------- |
-| 1,000           | 1.9 (1.5 to 2.3) | 1.0               | 3.9       |
-| 10,000          | 2.1 (1.9 to 2.2) | 1.3               | 5.9       |
-| 100,000         | 2.4 (2.2 to 2.5) | 1.5               | 7.0       |
-| 1,000,000       | 2.3 (2.1 to 2.6) | 1.5               | 10        |
+| 1,000           | 1.9 (1.6 to 2.2) | 0.99              | 3.8       |
+| 10,000          | 2.2 (1.9 to 2.4) | 1.2               | 5.8       |
+| 100,000         | 2.2 (2.1 to 2.3) | 1.5               | 6.4       |
+| 1,000,000       | 2.3 (2.2 to 3.2) | 1.5               | 9.3       |
 
 The same command also pastes 1,000,000 characters and then makes 100,000 random edits in ten
-batches of 10,000. The local cost per edit was 2.0, 1.8, 1.8, 1.9, 2.1, 2.1, 2.3, 2.1, 2.3 and
+batches of 10,000. The local cost per edit was 2.2, 1.9, 1.9, 1.9, 2.2, 2.1, 2.2, 2.3, 2.4 and
 2.4 µs as the run was cut into 19,852 and finally 187,175 segments. Before the per-replica
 indexes (ADR 0001), the cost per edit on this kind of workload grew linearly with the number of
 segments.
