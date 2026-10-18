@@ -1,6 +1,6 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
-import { FugueTextError, mergeStates, Text } from '../src/index.js';
+import { FugueTextError, mergeStates, FugueText } from '../src/index.js';
 import type { Operation, TextStateJSON } from '../src/index.js';
 import { checkInvariants, mirror, numRuns } from './support/helpers.js';
 
@@ -21,29 +21,29 @@ function codeOf(fn: () => unknown): string | undefined {
 
 describe('state-based sync', () => {
   it('loads a saved state', () => {
-    const a = new Text({ replicaId: 'a' });
+    const a = new FugueText({ replicaId: 'a' });
     a.insert(0, 'hello world');
     a.delete(0, 6);
-    const b = Text.load(a.save(), { replicaId: 'b' });
+    const b = FugueText.load(a.save(), { replicaId: 'b' });
     expect(b.toString()).toBe('world');
     expect(b.version).toEqual(a.version);
     checkInvariants(b);
-    const c = Text.load(JSON.parse(JSON.stringify(a)) as TextStateJSON, { replicaId: 'c' });
+    const c = FugueText.load(JSON.parse(JSON.stringify(a)) as TextStateJSON, { replicaId: 'c' });
     expect(c.toString()).toBe('world');
     expect(c.save()).toEqual(a.save());
   });
 
   it('resumes counters when a replica reloads its own state', () => {
-    const a = new Text({ replicaId: 'a' });
+    const a = new FugueText({ replicaId: 'a' });
     a.insert(0, 'abc');
-    const again = Text.load(a.save(), { replicaId: 'a' });
+    const again = FugueText.load(a.save(), { replicaId: 'a' });
     expect(op(again.insert(3, 'd')).counter).toBe(3);
   });
 
   it('merges concurrent edits in both directions', () => {
-    const a = new Text({ replicaId: 'a' });
+    const a = new FugueText({ replicaId: 'a' });
     a.insert(0, 'shared ');
-    const b = Text.load(a.save(), { replicaId: 'b' });
+    const b = FugueText.load(a.save(), { replicaId: 'b' });
     a.insert(7, 'alpha');
     a.delete(0, 1);
     b.insert(7, 'beta');
@@ -63,7 +63,7 @@ describe('state-based sync', () => {
   });
 
   it('is idempotent', () => {
-    const a = new Text({ replicaId: 'a' });
+    const a = new FugueText({ replicaId: 'a' });
     a.insert(0, 'abc');
     const state = a.save();
     const events: unknown[] = [];
@@ -76,8 +76,8 @@ describe('state-based sync', () => {
   });
 
   it('applies buffered operations that a merge unblocks and drops redundant ones', () => {
-    const a = new Text({ replicaId: 'a' });
-    const b = new Text({ replicaId: 'b' });
+    const a = new FugueText({ replicaId: 'a' });
+    const b = new FugueText({ replicaId: 'b' });
     const first = op(a.insert(0, 'x'));
     const second = op(a.insert(1, 'y'));
     const snapshot = a.save();
@@ -91,8 +91,8 @@ describe('state-based sync', () => {
   });
 
   it('refuses a state that contains unknown operations of its own replica ID', () => {
-    const a1 = new Text({ replicaId: 'a' });
-    const a2 = new Text({ replicaId: 'a' });
+    const a1 = new FugueText({ replicaId: 'a' });
+    const a2 = new FugueText({ replicaId: 'a' });
     a2.insert(0, 'x');
     expect(
       codeOf(() => {
@@ -102,7 +102,7 @@ describe('state-based sync', () => {
   });
 
   it('refuses inconsistent states without changing the document', () => {
-    const a = new Text({ replicaId: 'a' });
+    const a = new FugueText({ replicaId: 'a' });
     a.insert(0, 'abc');
     a.delete(1, 1); // counter 3 is a delete, not an element
     const before = a.save();
@@ -131,11 +131,11 @@ describe('state-based sync', () => {
   });
 
   it('mergeStates merges without a live document', () => {
-    const a = new Text({ replicaId: 'a' });
-    const b = new Text({ replicaId: 'b' });
+    const a = new FugueText({ replicaId: 'a' });
+    const b = new FugueText({ replicaId: 'b' });
     a.insert(0, 'left');
     b.insert(0, 'right');
-    const merged = Text.load(mergeStates(a.save(), b.save()), { replicaId: 'c' });
+    const merged = FugueText.load(mergeStates(a.save(), b.save()), { replicaId: 'c' });
     expect(merged.toString()).toBe('leftright');
   });
 });
@@ -154,7 +154,7 @@ const divergentStates = fc
     ),
   })
   .map(({ shared, edits }) => {
-    const apply = (text: Text, steps: readonly [boolean, number, string][]): void => {
+    const apply = (text: FugueText, steps: readonly [boolean, number, string][]): void => {
       for (const [insert, at, chunk] of steps) {
         if (insert || text.length === 0) text.insert(at % (text.length + 1), chunk);
         else {
@@ -163,10 +163,10 @@ const divergentStates = fc
         }
       }
     };
-    const origin = new Text({ replicaId: 'origin' });
+    const origin = new FugueText({ replicaId: 'origin' });
     apply(origin, shared);
     return edits.map((steps, i) => {
-      const replica = Text.load(origin.save(), { replicaId: `r${String(i)}` });
+      const replica = FugueText.load(origin.save(), { replicaId: `r${String(i)}` });
       apply(replica, steps);
       return replica.save();
     });
@@ -202,10 +202,10 @@ describe('merge properties', () => {
           },
         ),
         (steps) => {
-          const replicas = [new Text({ replicaId: 'x' }), new Text({ replicaId: 'y' })];
+          const replicas = [new FugueText({ replicaId: 'x' }), new FugueText({ replicaId: 'y' })];
           const ops: Operation[] = [];
           for (const [who, insert, at, chunk] of steps) {
-            const text = replicas[who] as Text;
+            const text = replicas[who] as FugueText;
             const result =
               insert || text.length === 0
                 ? text.insert(at % (text.length + 1), chunk)
@@ -215,9 +215,9 @@ describe('merge properties', () => {
                   );
             if (result !== undefined) ops.push(result);
           }
-          const viaOps = new Text({ replicaId: 'z' });
+          const viaOps = new FugueText({ replicaId: 'z' });
           for (const operation of ops) viaOps.apply(operation);
-          const viaMerge = new Text({ replicaId: 'w' });
+          const viaMerge = new FugueText({ replicaId: 'w' });
           for (const replica of replicas) viaMerge.merge(replica.save());
           expect(viaMerge.toString()).toBe(viaOps.toString());
           expect(viaMerge.save()).toEqual(viaOps.save());

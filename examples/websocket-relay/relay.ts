@@ -12,7 +12,7 @@
 import { pathToFileURL } from 'node:url';
 import { WebSocketServer, type WebSocket } from 'ws';
 // In your own project: import { ... } from 'fugue-text';
-import { decodeOperation, FugueTextError, Text } from '../../src/index.js';
+import { decodeOperation, FugueTextError, FugueText } from '../../src/index.js';
 import { frame, OPERATION, STATE, unframe } from './protocol.js';
 
 /** A running relay. */
@@ -20,14 +20,14 @@ export interface Relay {
   /** The TCP port it listens on. */
   readonly port: number;
   /** The relay's own replica of the document. */
-  readonly doc: Text;
+  readonly doc: FugueText;
   /** Disconnects every client and stops listening. */
   close(): Promise<void>;
 }
 
 /** Starts a relay on `port` (0 picks a free port). */
 export async function startRelay(port = 0): Promise<Relay> {
-  const doc = new Text({ replicaId: 'relay' });
+  const doc = new FugueText({ replicaId: 'relay' });
   const server = new WebSocketServer({ port, host: '127.0.0.1' });
   await new Promise<void>((resolve, reject) => {
     server.once('listening', resolve);

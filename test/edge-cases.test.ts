@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { FugueTextError, Text } from '../src/index.js';
+import { FugueTextError, FugueText } from '../src/index.js';
 import type { Operation, TextStateJSON } from '../src/index.js';
 import { internalList } from '../src/text.js';
 import { checkInvariants } from './support/helpers.js';
@@ -15,8 +15,8 @@ afterEach(() => {
 
 describe('edge cases', () => {
   it('extends a remote run that has a concurrent right sibling with a greater ID', () => {
-    const c = new Text({ replicaId: 'c' });
-    const d = new Text({ replicaId: 'd' });
+    const c = new FugueText({ replicaId: 'c' });
+    const d = new FugueText({ replicaId: 'd' });
     const base = op(c.insert(0, 'xy'));
     d.apply(base);
     const sibling = op(d.insert(2, 'Q')); // d > c, so Q sorts after c's continuation
@@ -65,9 +65,9 @@ describe('edge cases', () => {
         },
       ],
     };
-    expect(() => Text.load(forged)).toThrow(FugueTextError);
+    expect(() => FugueText.load(forged)).toThrow(FugueTextError);
     expect(() => {
-      new Text().merge(forged);
+      new FugueText().merge(forged);
     }).toThrow(/causal order/);
   });
 
@@ -88,7 +88,7 @@ describe('edge cases', () => {
         },
       ],
     };
-    const text = Text.load(split);
+    const text = FugueText.load(split);
     expect(text.toString()).toBe('abcd');
     expect(text.toJSON().records).toHaveLength(1);
     checkInvariants(text);
@@ -101,9 +101,9 @@ describe('edge cases', () => {
       version: { a: Number.MAX_SAFE_INTEGER },
       records: [],
     };
-    const text = Text.load(state, { replicaId: 'a' });
+    const text = FugueText.load(state, { replicaId: 'a' });
     expect(() => text.insert(0, 'xy')).toThrow(RangeError);
-    const full = Text.load(
+    const full = FugueText.load(
       { ...state, version: { a: Number.MAX_SAFE_INTEGER - 1 } },
       { replicaId: 'a' },
     );
@@ -113,12 +113,12 @@ describe('edge cases', () => {
 
   it('needs crypto.getRandomValues only for random replica IDs', () => {
     vi.stubGlobal('crypto', undefined);
-    expect(() => new Text()).toThrow(/replicaId/);
-    expect(new Text({ replicaId: 'fixed' }).replicaId).toBe('fixed');
+    expect(() => new FugueText()).toThrow(/replicaId/);
+    expect(new FugueText({ replicaId: 'fixed' }).replicaId).toBe('fixed');
   });
 
   it('exposes structure statistics for benchmarks', () => {
-    const text = new Text({ replicaId: 'a' });
+    const text = new FugueText({ replicaId: 'a' });
     for (const ch of 'hello') text.insert(text.length, ch);
     text.delete(1, 1);
     const list = internalList(text);
@@ -128,13 +128,13 @@ describe('edge cases', () => {
 
   it('handles very deep trees without recursion', () => {
     // Prepending one character at a time builds a chain of left children 20 000 deep.
-    const a = new Text({ replicaId: 'a' });
+    const a = new FugueText({ replicaId: 'a' });
     const ops: Operation[] = [];
     for (let i = 0; i < 20_000; i++) ops.push(op(a.insert(0, String.fromCharCode(97 + (i % 26)))));
-    const b = new Text({ replicaId: 'b' });
+    const b = new FugueText({ replicaId: 'b' });
     for (const operation of ops) b.apply(operation);
     expect(b.toString()).toBe(a.toString());
-    const copy = Text.load(a.save());
+    const copy = FugueText.load(a.save());
     copy.merge(b.save());
     expect(copy.toString()).toBe(a.toString());
     checkInvariants(copy);

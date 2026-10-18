@@ -3,7 +3,7 @@
  * first byte says what follows.
  */
 
-/** A full document state (`Text.save()`), sent by the relay to every client that connects. */
+/** A full document state (`text.save()`), sent by the relay to every client that connects. */
 export const STATE = 0x01;
 /** One encoded operation (`encodeOperation`). */
 export const OPERATION = 0x02;

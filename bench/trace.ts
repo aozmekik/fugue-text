@@ -9,7 +9,7 @@ import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { gzipSync } from 'node:zlib';
 import * as Y from 'yjs';
-import { decodeOperation, encodeOperation, Text } from '../src/index.js';
+import { decodeOperation, encodeOperation, FugueText } from '../src/index.js';
 import { internalList } from '../src/text.js';
 import {
   loadTrace,
@@ -49,22 +49,22 @@ check(fugue.toString() === trace.endContent, 'fugue-text local replay');
 const encodedOps = ops.map(encodeOperation);
 const fugueState = fugue.save();
 const fugueJson = JSON.stringify(fugue.toJSON());
-const remote = new Text({ replicaId: 'reader' });
+const remote = new FugueText({ replicaId: 'reader' });
 for (const op of ops) remote.apply(op);
 check(remote.toString() === trace.endContent, 'fugue-text remote replay');
-check(Text.load(fugueState).toString() === trace.endContent, 'fugue-text load');
+check(FugueText.load(fugueState).toString() === trace.endContent, 'fugue-text load');
 
 const fugueLocal = measure(() => replayFugue(), runs);
 const fugueRemote = measure(() => {
-  const doc = new Text({ replicaId: 'reader' });
+  const doc = new FugueText({ replicaId: 'reader' });
   for (const op of ops) doc.apply(op);
 }, runs);
 const fugueRemoteBinary = measure(() => {
-  const doc = new Text({ replicaId: 'reader' });
+  const doc = new FugueText({ replicaId: 'reader' });
   for (const bytes of encodedOps) doc.apply(decodeOperation(bytes));
 }, runs);
 const fugueSave = measure(() => fugue.save(), runs);
-const fugueLoad = measure(() => Text.load(fugueState), runs);
+const fugueLoad = measure(() => FugueText.load(fugueState), runs);
 const fugueHeap = retainedHeap('fugue-text');
 const list = internalList(fugue);
 

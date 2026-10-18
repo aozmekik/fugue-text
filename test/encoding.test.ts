@@ -1,7 +1,7 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import { ByteReader, ByteWriter, decodeWtf8, encodeWtf8 } from '../src/encoding/bytes.js';
-import { decodeOperation, encodeOperation, FugueTextError, Text } from '../src/index.js';
+import { decodeOperation, encodeOperation, FugueTextError, FugueText } from '../src/index.js';
 import type { Operation, TextStateJSON } from '../src/index.js';
 import { checkInvariants, numRuns } from './support/helpers.js';
 
@@ -146,10 +146,10 @@ const randomDocument = fc
     { maxLength: 40 },
   )
   .map((steps) => {
-    const replicas = new Map(['a', 'b', 'c'].map((id) => [id, new Text({ replicaId: id })]));
+    const replicas = new Map(['a', 'b', 'c'].map((id) => [id, new FugueText({ replicaId: id })]));
     const all = [...replicas.values()];
     for (const [who, insert, at, chunk] of steps) {
-      const text = replicas.get(who) as Text;
+      const text = replicas.get(who) as FugueText;
       const result =
         insert || text.length === 0
           ? text.insert(at % (text.length + 1), chunk)
@@ -159,8 +159,8 @@ const randomDocument = fc
         for (const other of all) if (other !== text) other.apply(result);
       }
     }
-    for (const text of all.slice(1)) (all[0] as Text).merge(text.save());
-    return all[0] as Text;
+    for (const text of all.slice(1)) (all[0] as FugueText).merge(text.save());
+    return all[0] as FugueText;
   });
 
 describe('state codecs', () => {
@@ -168,13 +168,13 @@ describe('state codecs', () => {
     fc.assert(
       fc.property(randomDocument, (text) => {
         const bytes = text.save();
-        const fromBinary = Text.load(bytes, { replicaId: 'reader' });
+        const fromBinary = FugueText.load(bytes, { replicaId: 'reader' });
         expect(fromBinary.toString()).toBe(text.toString());
         expect(fromBinary.version).toEqual(text.version);
         expect(fromBinary.save()).toEqual(bytes);
         checkInvariants(fromBinary);
         const json = JSON.parse(JSON.stringify(text.toJSON())) as TextStateJSON;
-        const fromJson = Text.load(json, { replicaId: 'reader' });
+        const fromJson = FugueText.load(json, { replicaId: 'reader' });
         expect(fromJson.save()).toEqual(bytes);
         expect(fromJson.toJSON()).toEqual(json);
       }),
@@ -187,7 +187,7 @@ describe('state codecs', () => {
       fc.property(fc.uint8Array({ maxLength: 64 }), (bytes) => {
         const withMagic = Uint8Array.from([0x46, 0x55, 0x47, 0x53, 1, ...bytes]);
         for (const input of [bytes, withMagic]) {
-          const code = codeOf(() => Text.load(input));
+          const code = codeOf(() => FugueText.load(input));
           if (code !== undefined) expect(code).toBe('invalid-state');
         }
       }),
@@ -202,9 +202,9 @@ describe('state codecs', () => {
         if (bytes.length === 0) return;
         const corrupted = Uint8Array.from(bytes);
         corrupted[at % corrupted.length] = value;
-        let loaded: Text | undefined;
+        let loaded: FugueText | undefined;
         const code = codeOf(() => {
-          loaded = Text.load(corrupted);
+          loaded = FugueText.load(corrupted);
         });
         if (code !== undefined) expect(code).toBe('invalid-state');
         if (loaded !== undefined) checkInvariants(loaded);
@@ -251,9 +251,9 @@ describe('state codecs', () => {
       base([record(1, { parent: { replica: 'b', counter: 0 } }), { ...record(0), replica: 'b' }]),
     ];
     for (const value of cases) {
-      expect(codeOf(() => Text.load(value as TextStateJSON))).toBe('invalid-state');
+      expect(codeOf(() => FugueText.load(value as TextStateJSON))).toBe('invalid-state');
     }
-    expect(codeOf(() => Text.load(Uint8Array.of(1, 2, 3)))).toBe('invalid-state');
+    expect(codeOf(() => FugueText.load(Uint8Array.of(1, 2, 3)))).toBe('invalid-state');
   });
 });
 
@@ -268,8 +268,8 @@ const randomOperations = fc
     { minLength: 1, maxLength: 20 },
   )
   .map((steps) => {
-    const a = new Text({ replicaId: 'alpha' });
-    const b = new Text({ replicaId: 'beta' });
+    const a = new FugueText({ replicaId: 'alpha' });
+    const b = new FugueText({ replicaId: 'beta' });
     const ops: Operation[] = [];
     for (const [insert, at, chunk] of steps) {
       const text = at % 2 === 0 ? a : b;
@@ -296,8 +296,8 @@ describe('operation codec', () => {
   });
 
   it('is smaller than JSON for typical keystrokes', () => {
-    const a = new Text({ replicaId: 'k3j8f2la9qpe' });
-    const b = new Text({ replicaId: 'zz81bc0d2e4f' });
+    const a = new FugueText({ replicaId: 'k3j8f2la9qpe' });
+    const b = new FugueText({ replicaId: 'zz81bc0d2e4f' });
     b.apply(a.insert(0, 'hello') as Operation);
     const keystroke = b.insert(5, '!') as Operation;
     expect(encodeOperation(keystroke).length).toBeLessThan(JSON.stringify(keystroke).length / 2);
@@ -316,7 +316,7 @@ describe('operation codec', () => {
   });
 
   it('rejects truncated and padded encodings', () => {
-    const a = new Text({ replicaId: 'a' });
+    const a = new FugueText({ replicaId: 'a' });
     const bytes = encodeOperation(a.insert(0, 'hello') as Operation);
     for (let length = 0; length < bytes.length; length++) {
       expect(codeOf(() => decodeOperation(bytes.subarray(0, length)))).toBe('invalid-operation');

@@ -1,5 +1,5 @@
 /**
- * Public data types shared by the {@link Text} API, the operation format and the codecs.
+ * Public data types shared by the {@link FugueText} API, the operation format and the codecs.
  *
  * Every type here is a plain, JSON-serialisable value: you can `JSON.stringify` an operation, an
  * anchor or a version vector and send it over any transport.
@@ -13,7 +13,7 @@
 export type ReplicaId = string;
 
 /**
- * The globally unique identity of one element (one UTF-16 code unit) of a {@link Text}.
+ * The globally unique identity of one element (one UTF-16 code unit) of a {@link FugueText}.
  *
  * Every replica numbers what it creates with a private counter, so `(replica, counter)` is unique.
  */
@@ -91,7 +91,7 @@ export interface DeleteOperation {
 export type Operation = InsertOperation | DeleteOperation;
 
 /**
- * What {@link Text.apply} did with an operation:
+ * What {@link FugueText.apply} did with an operation:
  * - `applied`: it was integrated (and possibly unblocked buffered operations);
  * - `buffered`: a causal dependency is missing, so it waits in the delivery buffer;
  * - `duplicate`: it was already applied or is already buffered, so it was ignored.
@@ -110,8 +110,8 @@ export type AnchorBias = 'left' | 'right';
 
 /**
  * A position between characters that survives concurrent edits, such as a caret or a selection
- * endpoint. Create one with {@link Text.createAnchor} and turn it back into an index with
- * {@link Text.resolveAnchor}. Anchors are plain JSON and can be shared with other replicas.
+ * endpoint. Create one with {@link FugueText.createAnchor} and turn it back into an index with
+ * {@link FugueText.resolveAnchor}. Anchors are plain JSON and can be shared with other replicas.
  */
 export type Anchor =
   | {
@@ -161,11 +161,11 @@ export interface ChangeEvent {
   readonly changes: readonly TextChange[];
 }
 
-/** Receives {@link ChangeEvent}s; see {@link Text.subscribe}. */
+/** Receives {@link ChangeEvent}s; see {@link FugueText.subscribe}. */
 export type ChangeListener = (event: ChangeEvent) => void;
 
-/** Options for creating or loading a {@link Text}. */
-export interface TextOptions {
+/** Options for creating or loading a {@link FugueText}. */
+export interface FugueTextOptions {
   /**
    * This replica's ID. Defaults to a random 12-character ID. Reuse an ID only when loading a state
    * that contains every operation that ID has ever produced.
@@ -190,7 +190,7 @@ export interface StateRecordJSON {
 }
 
 /**
- * Human-readable form of a document state, produced by {@link Text.toJSON}. Records are listed in
+ * Human-readable form of a document state, produced by {@link FugueText.toJSON}. Records are listed in
  * document order and include deleted elements (without their text).
  */
 export interface TextStateJSON {

@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
-import { Text } from '../src/index.js';
+import { FugueText } from '../src/index.js';
 import type { ChangeEvent, Operation } from '../src/index.js';
 import { checkInvariants, mirror } from './support/helpers.js';
 
-describe('Text: local editing', () => {
+describe('FugueText: local editing', () => {
   it('starts empty', () => {
-    const text = new Text({ replicaId: 'a' });
+    const text = new FugueText({ replicaId: 'a' });
     expect(text.toString()).toBe('');
     expect(text.length).toBe(0);
     expect(text.version).toEqual({});
@@ -13,7 +13,7 @@ describe('Text: local editing', () => {
   });
 
   it('inserts and deletes like a string', () => {
-    const text = new Text({ replicaId: 'a' });
+    const text = new FugueText({ replicaId: 'a' });
     text.insert(0, 'world');
     text.insert(0, 'hello ');
     text.insert(text.length, '!');
@@ -27,7 +27,7 @@ describe('Text: local editing', () => {
   });
 
   it('returns operations that describe the edit', () => {
-    const text = new Text({ replicaId: 'a' });
+    const text = new FugueText({ replicaId: 'a' });
     const first = text.insert(0, 'ab');
     expect(first).toEqual({
       type: 'insert',
@@ -50,7 +50,7 @@ describe('Text: local editing', () => {
   });
 
   it('returns undefined for empty edits', () => {
-    const text = new Text({ replicaId: 'a' });
+    const text = new FugueText({ replicaId: 'a' });
     expect(text.insert(0, '')).toBeUndefined();
     text.insert(0, 'x');
     expect(text.delete(0, 0)).toBeUndefined();
@@ -58,7 +58,7 @@ describe('Text: local editing', () => {
   });
 
   it('validates arguments', () => {
-    const text = new Text({ replicaId: 'a' });
+    const text = new FugueText({ replicaId: 'a' });
     text.insert(0, 'abc');
     expect(() => text.insert(4, 'x')).toThrow(RangeError);
     expect(() => text.insert(-1, 'x')).toThrow(RangeError);
@@ -73,39 +73,39 @@ describe('Text: local editing', () => {
   });
 
   it('validates replica IDs', () => {
-    expect(() => new Text({ replicaId: '' })).toThrow(TypeError);
-    expect(() => new Text({ replicaId: 'has space' })).toThrow(TypeError);
-    expect(() => new Text({ replicaId: 'x'.repeat(65) })).toThrow(TypeError);
-    expect(() => new Text({ replicaId: 'é' })).toThrow(TypeError);
-    expect(new Text({ replicaId: 'x'.repeat(64) }).replicaId).toHaveLength(64);
-    expect(new Text({ replicaId: 'user@example.com#1' }).replicaId).toBe('user@example.com#1');
+    expect(() => new FugueText({ replicaId: '' })).toThrow(TypeError);
+    expect(() => new FugueText({ replicaId: 'has space' })).toThrow(TypeError);
+    expect(() => new FugueText({ replicaId: 'x'.repeat(65) })).toThrow(TypeError);
+    expect(() => new FugueText({ replicaId: 'é' })).toThrow(TypeError);
+    expect(new FugueText({ replicaId: 'x'.repeat(64) }).replicaId).toHaveLength(64);
+    expect(new FugueText({ replicaId: 'user@example.com#1' }).replicaId).toBe('user@example.com#1');
   });
 
   it('generates distinct random replica IDs', () => {
-    const ids = new Set(Array.from({ length: 100 }, () => new Text().replicaId));
+    const ids = new Set(Array.from({ length: 100 }, () => new FugueText().replicaId));
     expect(ids.size).toBe(100);
     for (const id of ids) expect(id).toMatch(/^[a-z2-7]{12}$/);
   });
 
   it('counts UTF-16 code units, including lone surrogates', () => {
-    const text = new Text({ replicaId: 'a' });
+    const text = new FugueText({ replicaId: 'a' });
     text.insert(0, 'a😀b');
     expect(text.length).toBe(4);
     text.delete(1, 1); // leaves a lone low surrogate behind
     expect(text.toString()).toBe('a\udE00b');
-    const copy = Text.load(text.save(), { replicaId: 'b' });
+    const copy = FugueText.load(text.save(), { replicaId: 'b' });
     expect(copy.toString()).toBe('a\udE00b');
   });
 
   it('compresses sequential typing into one run', () => {
-    const text = new Text({ replicaId: 'a' });
+    const text = new FugueText({ replicaId: 'a' });
     for (const ch of 'hello world') text.insert(text.length, ch);
     expect(text.toJSON().records).toHaveLength(1);
     checkInvariants(text);
   });
 
   it('handles a long document typed at random positions', () => {
-    const text = new Text({ replicaId: 'a' });
+    const text = new FugueText({ replicaId: 'a' });
     let model = '';
     let seed = 42;
     const random = (n: number): number => {
@@ -130,9 +130,9 @@ describe('Text: local editing', () => {
   });
 });
 
-describe('Text: change events', () => {
+describe('FugueText: change events', () => {
   it('reports local edits', () => {
-    const text = new Text({ replicaId: 'a' });
+    const text = new FugueText({ replicaId: 'a' });
     const events: ChangeEvent[] = [];
     text.subscribe((event) => events.push(event));
     text.insert(0, 'abc');
@@ -144,8 +144,8 @@ describe('Text: change events', () => {
   });
 
   it('reports remote edits with indexes valid in order', () => {
-    const a = new Text({ replicaId: 'a' });
-    const b = new Text({ replicaId: 'b' });
+    const a = new FugueText({ replicaId: 'a' });
+    const b = new FugueText({ replicaId: 'b' });
     const ops: Operation[] = [];
     const push = (op: Operation | undefined): void => {
       if (op !== undefined) ops.push(op);
@@ -165,7 +165,7 @@ describe('Text: change events', () => {
   });
 
   it('stops notifying after unsubscribe', () => {
-    const text = new Text({ replicaId: 'a' });
+    const text = new FugueText({ replicaId: 'a' });
     const listener = vi.fn();
     const unsubscribe = text.subscribe(listener);
     text.insert(0, 'a');
@@ -175,7 +175,7 @@ describe('Text: change events', () => {
   });
 
   it('isolates listener failures', async () => {
-    const text = new Text({ replicaId: 'a' });
+    const text = new FugueText({ replicaId: 'a' });
     const failure = new Error('listener failed');
     const reported = new Promise<unknown>((resolve) => {
       process.once('uncaughtException', resolve);
@@ -193,7 +193,7 @@ describe('Text: change events', () => {
   });
 
   it('allows edits from inside a listener', () => {
-    const text = new Text({ replicaId: 'a' });
+    const text = new FugueText({ replicaId: 'a' });
     text.subscribe((event) => {
       if (event.changes[0]?.type === 'insert' && text.length === 1) text.insert(1, '!');
     });
@@ -202,9 +202,9 @@ describe('Text: change events', () => {
   });
 });
 
-describe('Text: anchors', () => {
+describe('FugueText: anchors', () => {
   it('resolves to the creation index while nothing changes', () => {
-    const text = new Text({ replicaId: 'a' });
+    const text = new FugueText({ replicaId: 'a' });
     text.insert(0, 'hello');
     for (let index = 0; index <= text.length; index++) {
       expect(text.resolveAnchor(text.createAnchor(index, 'left'))).toBe(index);
@@ -213,7 +213,7 @@ describe('Text: anchors', () => {
   });
 
   it('uses start and end sentinels at the edges', () => {
-    const text = new Text({ replicaId: 'a' });
+    const text = new FugueText({ replicaId: 'a' });
     text.insert(0, 'ab');
     const start = text.createAnchor(0, 'left');
     const end = text.createAnchor(2, 'right');
@@ -226,7 +226,7 @@ describe('Text: anchors', () => {
   });
 
   it('follows its character and honours its bias', () => {
-    const text = new Text({ replicaId: 'a' });
+    const text = new FugueText({ replicaId: 'a' });
     text.insert(0, 'ac');
     const left = text.createAnchor(1, 'left'); // sticks to 'a'
     const right = text.createAnchor(1, 'right'); // sticks to 'c'
@@ -239,7 +239,7 @@ describe('Text: anchors', () => {
   });
 
   it('collapses to the gap when its character is deleted', () => {
-    const text = new Text({ replicaId: 'a' });
+    const text = new FugueText({ replicaId: 'a' });
     text.insert(0, 'abc');
     const anchor = text.createAnchor(2, 'left'); // after 'b'
     text.delete(1, 1);
@@ -248,8 +248,8 @@ describe('Text: anchors', () => {
   });
 
   it('survives concurrent edits on another replica', () => {
-    const a = new Text({ replicaId: 'a' });
-    const b = new Text({ replicaId: 'b' });
+    const a = new FugueText({ replicaId: 'a' });
+    const b = new FugueText({ replicaId: 'b' });
     b.apply(a.insert(0, 'hello world') as Operation);
     const caret = b.createAnchor(6, 'right'); // before 'w'
     a.apply(b.insert(11, '!') as Operation);
@@ -263,8 +263,8 @@ describe('Text: anchors', () => {
   });
 
   it('returns undefined for characters not received yet and rejects garbage', () => {
-    const a = new Text({ replicaId: 'a' });
-    const b = new Text({ replicaId: 'b' });
+    const a = new FugueText({ replicaId: 'a' });
+    const b = new FugueText({ replicaId: 'b' });
     a.insert(0, 'x');
     const anchor = a.createAnchor(1, 'left');
     expect(b.resolveAnchor(anchor)).toBeUndefined();

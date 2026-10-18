@@ -3,7 +3,7 @@
 import { readFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
 import * as Y from 'yjs';
-import { Text } from '../src/index.js';
+import { FugueText } from '../src/index.js';
 import type { Operation } from '../src/index.js';
 
 /** One edit: `[position, deletedCount, insertedText]`, positions in code points (ASCII here). */
@@ -22,8 +22,8 @@ export function loadTrace(name = 'automerge-paper'): { patches: Patch[]; endCont
 }
 
 /** Replays the trace as local edits on one fugue-text replica. */
-export function replayFugue(patches: readonly Patch[]): { doc: Text; ops: Operation[] } {
-  const doc = new Text({ replicaId: 'author' });
+export function replayFugue(patches: readonly Patch[]): { doc: FugueText; ops: Operation[] } {
+  const doc = new FugueText({ replicaId: 'author' });
   const ops: Operation[] = [];
   for (const [position, deleted, inserted] of patches) {
     if (deleted > 0) ops.push(doc.delete(position, deleted) as Operation);

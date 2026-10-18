@@ -11,7 +11,7 @@
  */
 
 // In your own project: import { ... } from 'fugue-text';
-import { decodeOperation, encodeOperation, Text } from '../../src/index.js';
+import { decodeOperation, encodeOperation, FugueText } from '../../src/index.js';
 import { TextareaBinding } from './textarea-binding.js';
 
 type Message =
@@ -22,7 +22,7 @@ const textarea = document.querySelector('textarea');
 const status = document.querySelector('#status');
 if (textarea === null || status === null) throw new Error('missing elements');
 
-const doc = new Text(); // a fresh random replica ID per tab
+const doc = new FugueText(); // a fresh random replica ID per tab
 const channel = new BroadcastChannel('fugue-text-demo');
 const post = (message: Message): void => {
   channel.postMessage(message);

@@ -21,12 +21,12 @@ import type {
   Operation,
   ReplicaId,
   TextChange,
-  TextOptions,
+  FugueTextOptions,
   TextStateJSON,
   VersionVector,
 } from './types.js';
 
-let listOf: (text: Text) => FugueList;
+let listOf: (text: FugueText) => FugueList;
 
 /** Shared by every operation without new dependencies (the common case while typing). */
 const NO_DEPS: VersionVector = Object.freeze({});
@@ -35,17 +35,17 @@ const NO_DEPS: VersionVector = Object.freeze({});
  * One replica of a collaboratively edited plain-text document, implemented with the Fugue list
  * CRDT (Weidner & Kleppmann, arXiv:2305.00583).
  *
- * Local edits ({@link Text.insert}, {@link Text.delete}) take effect immediately and return an
+ * Local edits ({@link FugueText.insert}, {@link FugueText.delete}) take effect immediately and return an
  * {@link Operation} to broadcast to the other replicas, which integrate it with
- * {@link Text.apply}. Operations may arrive late, out of order or more than once; they are
+ * {@link FugueText.apply}. Operations may arrive late, out of order or more than once; they are
  * buffered until their causal dependencies are present and duplicates are ignored. Replicas can
- * also exchange whole states with {@link Text.save} and {@link Text.merge}. Once every replica
+ * also exchange whole states with {@link FugueText.save} and {@link FugueText.merge}. Once every replica
  * has seen the same operations, all of them hold the same text, and concurrent insertions at the
  * same place do not interleave character by character.
  *
  * Indexes and lengths count UTF-16 code units, like JavaScript strings and `<textarea>`.
  */
-export class Text {
+export class FugueText {
   /** This replica's ID. */
   readonly replicaId: ReplicaId;
   #list = new FugueList();
@@ -62,7 +62,7 @@ export class Text {
   }
 
   /** Creates an empty document. */
-  constructor(options: TextOptions = {}) {
+  constructor(options: FugueTextOptions = {}) {
     const replicaId = options.replicaId ?? randomReplicaId();
     if (!isReplicaId(replicaId)) {
       throw new TypeError('replicaId must be 1 to 64 printable ASCII characters');
@@ -71,12 +71,12 @@ export class Text {
   }
 
   /**
-   * Creates a replica from a state produced by {@link Text.save} or {@link Text.toJSON}.
+   * Creates a replica from a state produced by {@link FugueText.save} or {@link FugueText.toJSON}.
    * @throws {FugueTextError} `invalid-state` if the state is malformed.
    */
-  static load(state: Uint8Array | TextStateJSON, options: TextOptions = {}): Text {
+  static load(state: Uint8Array | TextStateJSON, options: FugueTextOptions = {}): FugueText {
     const snapshot = decodeState(state);
-    const text = new Text(options);
+    const text = new FugueText(options);
     text.#list = FugueList.fromSnapshot(snapshot.records);
     text.#list.runsInCausalOrder(); // rejects states that no execution can produce
     text.#version = new Map(snapshot.version);
@@ -211,7 +211,7 @@ export class Text {
   }
 
   /**
-   * Merges a state produced by another replica's {@link Text.save} or {@link Text.toJSON} into
+   * Merges a state produced by another replica's {@link FugueText.save} or {@link FugueText.toJSON} into
    * this one (state-based synchronisation). Merging is commutative, associative and idempotent.
    * @throws {FugueTextError} `invalid-state` if the state is malformed or inconsistent with this
    *   document, `replica-conflict` if it contains operations of this replica's ID unknown here.
@@ -405,13 +405,13 @@ export class Text {
  * @throws {FugueTextError} `invalid-state` if either state is malformed.
  */
 export function mergeStates(a: Uint8Array, b: Uint8Array): Uint8Array<ArrayBuffer> {
-  const text = Text.load(a);
+  const text = FugueText.load(a);
   text.merge(b);
   return text.save();
 }
 
 /** @internal Gives tests and benchmarks access to the underlying structure. */
-export function internalList(text: Text): FugueList {
+export function internalList(text: FugueText): FugueList {
   return listOf(text);
 }
 

@@ -1,10 +1,10 @@
 import { expect } from 'vitest';
-import { internalList, type Text } from '../../src/text.js';
+import { internalList, type FugueText } from '../../src/text.js';
 import type { ChangeEvent, ElementId, InsertOperation, Operation } from '../../src/types.js';
 import type { RefInsert } from './reference.js';
 
 /** Asserts every internal invariant of a replica. */
-export function checkInvariants(text: Text): void {
+export function checkInvariants(text: FugueText): void {
   internalList(text).checkInvariants();
 }
 
@@ -48,7 +48,7 @@ export function applyEvent(mirror: string, event: ChangeEvent): string {
 }
 
 /** Keeps a string in sync with a replica purely through its change events. */
-export function mirror(text: Text): { readonly value: string } {
+export function mirror(text: FugueText): { readonly value: string } {
   const state = { value: text.toString() };
   text.subscribe((event) => {
     state.value = applyEvent(state.value, event);

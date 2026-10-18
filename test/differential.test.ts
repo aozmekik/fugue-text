@@ -7,7 +7,7 @@
 
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
-import { Text } from '../src/index.js';
+import { FugueText } from '../src/index.js';
 import type { Operation } from '../src/index.js';
 import {
   checkInvariants,
@@ -68,12 +68,12 @@ const scenario = fc.integer({ min: 1, max: 4 }).chain((count) => {
 });
 
 interface Twin {
-  readonly real: Text;
+  readonly real: FugueText;
   readonly reference: ReferenceFugue;
   readonly inbox: Operation[];
 }
 
-function isReady(text: Text, op: Operation): boolean {
+function isReady(text: FugueText, op: Operation): boolean {
   const version = text.version;
   if ((version[op.replica] ?? 0) !== op.counter) return false;
   return Object.entries(op.deps).every(([replica, counter]) => (version[replica] ?? 0) >= counter);
@@ -89,7 +89,7 @@ describe('differential: optimised implementation vs the paper algorithm', () => 
     fc.assert(
       fc.property(scenario, ({ ids, actions }) => {
         const twins: Twin[] = ids.map((replicaId) => ({
-          real: new Text({ replicaId }),
+          real: new FugueText({ replicaId }),
           reference: new ReferenceFugue(),
           inbox: [],
         }));

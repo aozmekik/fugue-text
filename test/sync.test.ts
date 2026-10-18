@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { FugueTextError, Text } from '../src/index.js';
+import { FugueTextError, FugueText } from '../src/index.js';
 import type { InsertOperation, Operation } from '../src/index.js';
 import { checkInvariants } from './support/helpers.js';
 
@@ -21,16 +21,16 @@ function rejects(fn: () => unknown, code: string): void {
 
 describe('operation-based sync', () => {
   it('applies operations in order', () => {
-    const a = new Text({ replicaId: 'a' });
-    const b = new Text({ replicaId: 'b' });
+    const a = new FugueText({ replicaId: 'a' });
+    const b = new FugueText({ replicaId: 'b' });
     expect(b.apply(op(a.insert(0, 'hi')))).toBe('applied');
     expect(b.toString()).toBe('hi');
     expect(b.version).toEqual({ a: 2 });
   });
 
   it('ignores redelivered operations', () => {
-    const a = new Text({ replicaId: 'a' });
-    const b = new Text({ replicaId: 'b' });
+    const a = new FugueText({ replicaId: 'a' });
+    const b = new FugueText({ replicaId: 'b' });
     const insert = op(a.insert(0, 'hi'));
     const remove = op(a.delete(0, 1));
     expect(b.apply(insert)).toBe('applied');
@@ -41,15 +41,15 @@ describe('operation-based sync', () => {
   });
 
   it('ignores its own operations echoed back by a relay', () => {
-    const a = new Text({ replicaId: 'a' });
+    const a = new FugueText({ replicaId: 'a' });
     const insert = op(a.insert(0, 'hi'));
     expect(a.apply(insert)).toBe('duplicate');
     expect(a.toString()).toBe('hi');
   });
 
   it('buffers operations until their predecessor from the same replica arrives', () => {
-    const a = new Text({ replicaId: 'a' });
-    const b = new Text({ replicaId: 'b' });
+    const a = new FugueText({ replicaId: 'a' });
+    const b = new FugueText({ replicaId: 'b' });
     const first = op(a.insert(0, 'ab'));
     const second = op(a.insert(2, 'cd'));
     const third = op(a.delete(0, 1));
@@ -65,9 +65,9 @@ describe('operation-based sync', () => {
   });
 
   it('buffers operations until causal dependencies from other replicas arrive', () => {
-    const a = new Text({ replicaId: 'a' });
-    const b = new Text({ replicaId: 'b' });
-    const c = new Text({ replicaId: 'c' });
+    const a = new FugueText({ replicaId: 'a' });
+    const b = new FugueText({ replicaId: 'b' });
+    const c = new FugueText({ replicaId: 'c' });
     const fromA = op(a.insert(0, 'hello'));
     b.apply(fromA);
     const fromB = op(b.delete(0, 5)); // depends on a's insert
@@ -80,9 +80,9 @@ describe('operation-based sync', () => {
 
   it('respects causality that does not involve the referenced elements', () => {
     // b sees a's insert and then inserts somewhere unrelated; c must still apply them in order.
-    const a = new Text({ replicaId: 'a' });
-    const b = new Text({ replicaId: 'b' });
-    const c = new Text({ replicaId: 'c' });
+    const a = new FugueText({ replicaId: 'a' });
+    const b = new FugueText({ replicaId: 'b' });
+    const c = new FugueText({ replicaId: 'c' });
     const base = op(a.insert(0, 'xy'));
     b.apply(base);
     c.apply(base);
@@ -96,8 +96,8 @@ describe('operation-based sync', () => {
   });
 
   it('sends only dependencies that changed since its previous operation', () => {
-    const a = new Text({ replicaId: 'a' });
-    const b = new Text({ replicaId: 'b' });
+    const a = new FugueText({ replicaId: 'a' });
+    const b = new FugueText({ replicaId: 'b' });
     b.apply(op(a.insert(0, 'a')));
     expect(op(b.insert(1, 'b')).deps).toEqual({ a: 1 });
     expect(op(b.insert(2, 'b')).deps).toEqual({});
@@ -106,14 +106,14 @@ describe('operation-based sync', () => {
   });
 
   it('declares full dependencies after loading a state', () => {
-    const a = new Text({ replicaId: 'a' });
+    const a = new FugueText({ replicaId: 'a' });
     a.insert(0, 'abc');
-    const b = Text.load(a.save(), { replicaId: 'b' });
+    const b = FugueText.load(a.save(), { replicaId: 'b' });
     expect(op(b.insert(3, '!')).deps).toEqual({ a: 3 });
   });
 
   it('rejects malformed operations without changing the document', () => {
-    const b = new Text({ replicaId: 'b' });
+    const b = new FugueText({ replicaId: 'b' });
     b.insert(0, 'base');
     const valid: InsertOperation = {
       type: 'insert',
@@ -161,7 +161,7 @@ describe('operation-based sync', () => {
   });
 
   it('rejects operations that reference unknown elements', () => {
-    const b = new Text({ replicaId: 'b' });
+    const b = new FugueText({ replicaId: 'b' });
     const orphan: Operation = {
       type: 'insert',
       replica: 'a',
@@ -184,8 +184,8 @@ describe('operation-based sync', () => {
   });
 
   it('rejects operations overlapping ones already applied', () => {
-    const a = new Text({ replicaId: 'a' });
-    const b = new Text({ replicaId: 'b' });
+    const a = new FugueText({ replicaId: 'a' });
+    const b = new FugueText({ replicaId: 'b' });
     b.apply(op(a.insert(0, 'abc')));
     const overlapping: Operation = {
       type: 'insert',
@@ -200,15 +200,15 @@ describe('operation-based sync', () => {
   });
 
   it('detects another instance using the same replica ID', () => {
-    const a1 = new Text({ replicaId: 'a' });
-    const a2 = new Text({ replicaId: 'a' });
+    const a1 = new FugueText({ replicaId: 'a' });
+    const a2 = new FugueText({ replicaId: 'a' });
     const foreign = op(a2.insert(0, 'x'));
     rejects(() => a1.apply(foreign), 'replica-conflict');
   });
 
   it('keeps operations applied before a buffered operation turned out to be invalid', () => {
-    const a = new Text({ replicaId: 'a' });
-    const b = new Text({ replicaId: 'b' });
+    const a = new FugueText({ replicaId: 'a' });
+    const b = new FugueText({ replicaId: 'b' });
     const first = op(a.insert(0, 'ok'));
     const broken: Operation = {
       type: 'insert',
@@ -226,8 +226,8 @@ describe('operation-based sync', () => {
   });
 
   it('round-trips operations through JSON', () => {
-    const a = new Text({ replicaId: 'a' });
-    const b = new Text({ replicaId: 'b' });
+    const a = new FugueText({ replicaId: 'a' });
+    const b = new FugueText({ replicaId: 'b' });
     for (const value of [a.insert(0, 'héllo'), a.delete(1, 2), a.insert(1, '\u{1F600}')]) {
       b.apply(JSON.parse(JSON.stringify(value)) as Operation);
     }

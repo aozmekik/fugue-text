@@ -6,7 +6,7 @@
 
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
-import { decodeOperation, encodeOperation, Text } from '../src/index.js';
+import { decodeOperation, encodeOperation, FugueText } from '../src/index.js';
 import type { Operation, TextStateJSON } from '../src/index.js';
 import { checkInvariants, mirror, numRuns } from './support/helpers.js';
 
@@ -115,7 +115,7 @@ describe('convergence', () => {
   it('all replicas converge under random concurrency, reordering and duplication', () => {
     fc.assert(
       fc.property(scenario, ({ ids, actions, shuffle }) => {
-        const replicas = ids.map((replicaId) => new Text({ replicaId }));
+        const replicas = ids.map((replicaId) => new FugueText({ replicaId }));
         const mirrors = replicas.map(mirror);
         const inboxes: Operation[][] = replicas.map(() => []);
         const broadcast = (from: number, op: Operation | undefined): void => {
@@ -127,7 +127,7 @@ describe('convergence', () => {
         for (const step of actions) {
           switch (step.kind) {
             case 'insert': {
-              const text = replicas[step.replica] as Text;
+              const text = replicas[step.replica] as FugueText;
               broadcast(
                 step.replica,
                 text.insert(Math.floor(step.at * (text.length + 1)), step.text),
@@ -135,7 +135,7 @@ describe('convergence', () => {
               break;
             }
             case 'delete': {
-              const text = replicas[step.replica] as Text;
+              const text = replicas[step.replica] as FugueText;
               if (text.length === 0) break;
               const index = Math.floor(step.at * text.length);
               broadcast(
@@ -150,16 +150,16 @@ describe('convergence', () => {
               const index = Math.floor(step.pick * inbox.length);
               const op = inbox[index] as Operation;
               if (!step.keep) inbox.splice(index, 1);
-              (replicas[step.replica] as Text).apply(transmit(op, step.codec));
+              (replicas[step.replica] as FugueText).apply(transmit(op, step.codec));
               break;
             }
             case 'merge': {
               if (step.from === step.to) break;
-              const source = replicas[step.from] as Text;
+              const source = replicas[step.from] as FugueText;
               const state = step.json
                 ? (JSON.parse(JSON.stringify(source)) as TextStateJSON)
                 : source.save();
-              (replicas[step.to] as Text).merge(state);
+              (replicas[step.to] as FugueText).merge(state);
               break;
             }
           }
@@ -170,14 +170,14 @@ describe('convergence', () => {
         replicas.forEach((text, i) => {
           for (const op of shuffled(inboxes[i] as Operation[], shuffle)) text.apply(op);
         });
-        const expected = (replicas[0] as Text).toString();
-        const state = (replicas[0] as Text).save();
+        const expected = (replicas[0] as FugueText).toString();
+        const state = (replicas[0] as FugueText).save();
         for (const [i, text] of replicas.entries()) {
           checkInvariants(text);
           expect(text.pendingCount).toBe(0);
           expect(text.toString()).toBe(expected);
           expect(mirrors[i]?.value).toBe(expected);
-          expect(text.version).toEqual((replicas[0] as Text).version);
+          expect(text.version).toEqual((replicas[0] as FugueText).version);
           // Deterministic encoding: converged replicas serialise to identical bytes.
           expect(text.save()).toEqual(state);
         }

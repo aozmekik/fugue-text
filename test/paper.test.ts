@@ -6,30 +6,30 @@
 
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
-import { Text } from '../src/index.js';
+import { FugueText } from '../src/index.js';
 import type { Operation } from '../src/index.js';
 import { checkInvariants, codeUnits, numRuns } from './support/helpers.js';
 
 /** Types `word` one keystroke (one operation) at a time, left to right, starting at `index`. */
-function typeForward(text: Text, index: number, word: string): Operation[] {
+function typeForward(text: FugueText, index: number, word: string): Operation[] {
   return codeUnits(word).map((ch, i) => text.insert(index + i, ch) as Operation);
 }
 
 /** Types `word` right to left: every keystroke is inserted at `index`, before the previous one. */
-function typeBackward(text: Text, index: number, word: string): Operation[] {
+function typeBackward(text: FugueText, index: number, word: string): Operation[] {
   return codeUnits(word)
     .reverse()
     .map((ch) => text.insert(index, ch) as Operation);
 }
 
-function deliver(ops: readonly Operation[], ...targets: Text[]): void {
+function deliver(ops: readonly Operation[], ...targets: FugueText[]): void {
   for (const target of targets) for (const op of ops) target.apply(op);
 }
 
 describe('paper scenarios', () => {
   it('Figure 1: concurrent appends to a shopping list do not interleave', () => {
-    const alice = new Text({ replicaId: 'alice' });
-    const bob = new Text({ replicaId: 'bob' });
+    const alice = new FugueText({ replicaId: 'alice' });
+    const bob = new FugueText({ replicaId: 'bob' });
     deliver([alice.insert(0, 'milk') as Operation], bob);
     const fromAlice = typeForward(alice, 4, '\neggs');
     const fromBob = typeForward(bob, 4, '\nbread');
@@ -40,8 +40,8 @@ describe('paper scenarios', () => {
   });
 
   it('Figure 2: prepending items (backward insertion) does not interleave', () => {
-    const alice = new Text({ replicaId: 'alice' });
-    const bob = new Text({ replicaId: 'bob' });
+    const alice = new FugueText({ replicaId: 'alice' });
+    const bob = new FugueText({ replicaId: 'bob' });
     const fromAlice = [
       ...typeForward(alice, 0, 'apples\n'),
       ...typeForward(alice, 0, 'bananas\n'),
@@ -59,9 +59,9 @@ describe('paper scenarios', () => {
   });
 
   it('Figure 6: three concurrent inserts at the start, then AXBC', () => {
-    const r1 = new Text({ replicaId: 'r1' });
-    const r2 = new Text({ replicaId: 'r2' });
-    const r3 = new Text({ replicaId: 'r3' });
+    const r1 = new FugueText({ replicaId: 'r1' });
+    const r2 = new FugueText({ replicaId: 'r2' });
+    const r3 = new FugueText({ replicaId: 'r3' });
     const a = r1.insert(0, 'A') as Operation;
     const b = r2.insert(0, 'B') as Operation;
     const c = r3.insert(0, 'C') as Operation;
@@ -86,13 +86,13 @@ describe('paper scenarios', () => {
     // right children of A, so Fugue sorts them by replica ID: m < z puts Y first. FugueMax
     // would put X first because X's right origin (C) lies further right than Y's (B); this
     // library implements Fugue, not FugueMax (see docs/adr/0004-fugue-not-fuguemax.md).
-    const [p1, p2, p3] = ['p1', 'p2', 'p3'].map((replicaId) => new Text({ replicaId })) as [
-      Text,
-      Text,
-      Text,
+    const [p1, p2, p3] = ['p1', 'p2', 'p3'].map((replicaId) => new FugueText({ replicaId })) as [
+      FugueText,
+      FugueText,
+      FugueText,
     ];
-    const z = new Text({ replicaId: 'z' });
-    const m = new Text({ replicaId: 'm' });
+    const z = new FugueText({ replicaId: 'z' });
+    const m = new FugueText({ replicaId: 'm' });
     const a = p1.insert(0, 'A') as Operation;
     const b = p2.insert(0, 'B') as Operation;
     const c = p3.insert(0, 'C') as Operation;
@@ -125,8 +125,8 @@ interface BaseStep {
   readonly text: string;
 }
 
-function buildBase(steps: readonly BaseStep[]): Text {
-  const base = new Text({ replicaId: 'base' });
+function buildBase(steps: readonly BaseStep[]): FugueText {
+  const base = new FugueText({ replicaId: 'base' });
   for (const step of steps) {
     if (step.insert || base.length === 0) {
       base.insert(Math.floor(step.position * (base.length + 1)), step.text);
@@ -155,12 +155,12 @@ describe('non-interleaving properties', () => {
             const base = buildBase(steps);
             const state = base.save();
             const replicas = words.map((_, i) =>
-              Text.load(state, { replicaId: `typist${String(i)}` }),
+              FugueText.load(state, { replicaId: `typist${String(i)}` }),
             );
             const index = Math.floor(position * (base.length + 1));
             const ops = replicas.map((replica, i) => type(replica, index, words[i] as string));
             for (const replica of replicas) for (const batch of ops) deliver(batch, replica);
-            const result = (replicas[0] as Text).toString();
+            const result = (replicas[0] as FugueText).toString();
             for (const replica of replicas) {
               expect(replica.toString()).toBe(result);
               checkInvariants(replica);

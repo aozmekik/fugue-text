@@ -6,8 +6,8 @@
  * selection are kept in place with anchors, so text typed by others never moves your cursor.
  */
 
-// In your own project: import { Text, ... } from 'fugue-text';
-import type { Anchor, Operation, Text } from '../../src/index.js';
+// In your own project: import { FugueText, ... } from 'fugue-text';
+import type { Anchor, Operation, FugueText } from '../../src/index.js';
 
 /** The subset of HTMLTextAreaElement the binding needs (so it can be tested without a DOM). */
 export interface TextareaLike {
@@ -50,7 +50,7 @@ export function diff(before: string, after: string, caret = after.length): Splic
 
 /** See the module documentation. */
 export class TextareaBinding {
-  readonly #doc: Text;
+  readonly #doc: FugueText;
   readonly #textarea: TextareaLike;
   readonly #send: (op: Operation) => void;
   readonly #onInput = (): void => {
@@ -62,7 +62,7 @@ export class TextareaBinding {
    * @param textarea - The element to keep in sync.
    * @param send - Called with every local operation, to broadcast it.
    */
-  constructor(doc: Text, textarea: TextareaLike, send: (op: Operation) => void) {
+  constructor(doc: FugueText, textarea: TextareaLike, send: (op: Operation) => void) {
     this.#doc = doc;
     this.#textarea = textarea;
     this.#send = send;

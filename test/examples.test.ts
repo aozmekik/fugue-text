@@ -7,7 +7,7 @@ import {
 } from '../examples/broadcast-channel/textarea-binding.js';
 import { connect } from '../examples/websocket-relay/client.js';
 import { startRelay } from '../examples/websocket-relay/relay.js';
-import { Text } from '../src/index.js';
+import { FugueText } from '../src/index.js';
 import type { Operation } from '../src/index.js';
 import { numRuns } from './support/helpers.js';
 
@@ -62,10 +62,10 @@ describe('textarea binding', () => {
     const right = new FakeTextarea();
     const toRight: Operation[] = [];
     const toLeft: Operation[] = [];
-    const leftBinding = new TextareaBinding(new Text({ replicaId: 'L' }), left, (op) =>
+    const leftBinding = new TextareaBinding(new FugueText({ replicaId: 'L' }), left, (op) =>
       toRight.push(op),
     );
-    const rightBinding = new TextareaBinding(new Text({ replicaId: 'R' }), right, (op) =>
+    const rightBinding = new TextareaBinding(new FugueText({ replicaId: 'R' }), right, (op) =>
       toLeft.push(op),
     );
     const flush = (): void => {
@@ -97,10 +97,14 @@ describe('textarea binding', () => {
   });
 
   it('catches up from a merged state', () => {
-    const source = new Text({ replicaId: 'S' });
+    const source = new FugueText({ replicaId: 'S' });
     source.insert(0, 'shared state');
     const textarea = new FakeTextarea();
-    const binding = new TextareaBinding(new Text({ replicaId: 'T' }), textarea, () => undefined);
+    const binding = new TextareaBinding(
+      new FugueText({ replicaId: 'T' }),
+      textarea,
+      () => undefined,
+    );
     binding.merge(source.save());
     expect(textarea.value).toBe('shared state');
   });

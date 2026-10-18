@@ -8,7 +8,7 @@
 
 export { FugueTextError, type FugueTextErrorCode } from './errors.js';
 export { assertOperation, decodeOperation, encodeOperation } from './operations.js';
-export { mergeStates, Text } from './text.js';
+export { FugueText, mergeStates } from './text.js';
 export type {
   Anchor,
   AnchorBias,
@@ -24,7 +24,7 @@ export type {
   Side,
   StateRecordJSON,
   TextChange,
-  TextOptions,
+  FugueTextOptions,
   TextStateJSON,
   VersionVector,
 } from './types.js';

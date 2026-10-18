@@ -13,7 +13,7 @@
  */
 
 import * as Y from 'yjs';
-import { Text } from '../src/index.js';
+import { FugueText } from '../src/index.js';
 import type { Operation } from '../src/index.js';
 import { ReferenceFugue } from '../test/support/reference.js';
 import { collectGarbage, environment, formatNumber, median, table, writeResults } from './util.js';
@@ -71,7 +71,7 @@ function lengthAfter(edits: readonly Edit[]): number {
   return edits.reduce((n, [, deleted, inserted]) => n - deleted + inserted.length, 0);
 }
 
-function applyFugue(doc: Text, edits: readonly Edit[], ops?: Operation[]): void {
+function applyFugue(doc: FugueText, edits: readonly Edit[], ops?: Operation[]): void {
   for (const [position, deleted, inserted] of edits) {
     const op = deleted > 0 ? doc.delete(position, deleted) : doc.insert(position, inserted);
     if (ops !== undefined && op !== undefined) ops.push(op);
@@ -125,7 +125,7 @@ for (const size of sizes) {
   const probe = probeScript(length, probeCount, size + 1);
 
   // Build each document once, then time the probe on fresh copies loaded from its state.
-  const base = new Text({ replicaId: 'base' });
+  const base = new FugueText({ replicaId: 'base' });
   applyFugue(base, build);
   const state = base.save();
   const ybase = new Y.Doc();
@@ -135,8 +135,8 @@ for (const size of sizes) {
   const fugueRemoteRuns: number[] = [];
   const yjsLocalRuns: number[] = [];
   for (let rep = 0; rep <= repetitions; rep++) {
-    const local = Text.load(state, { replicaId: 'local' });
-    const remote = Text.load(state, { replicaId: 'remote' });
+    const local = FugueText.load(state, { replicaId: 'local' });
+    const remote = FugueText.load(state, { replicaId: 'remote' });
     const ops: Operation[] = [];
     const localNs = nsPerEdit(probeCount, () => {
       applyFugue(local, probe, ops);

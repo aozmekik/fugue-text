@@ -4,14 +4,14 @@
  */
 
 // In your own project: import { ... } from 'fugue-text';
-import { decodeOperation, encodeOperation, Text } from '../../src/index.js';
+import { decodeOperation, encodeOperation, FugueText } from '../../src/index.js';
 import type { Operation } from '../../src/index.js';
 import { frame, OPERATION, STATE, unframe } from './protocol.js';
 
 /** A connected replica. */
 export interface Client {
   /** The local replica. */
-  readonly doc: Text;
+  readonly doc: FugueText;
   /** Inserts locally and sends the operation. */
   insert(index: number, text: string): void;
   /** Deletes locally and sends the operation. */
@@ -24,7 +24,7 @@ export interface Client {
 
 /** Connects to a relay and resolves once the initial state has been received. */
 export async function connect(url: string, replicaId?: string): Promise<Client> {
-  const doc = new Text(replicaId === undefined ? {} : { replicaId });
+  const doc = new FugueText(replicaId === undefined ? {} : { replicaId });
   const socket = new WebSocket(url);
   socket.binaryType = 'arraybuffer';
   const waiters = new Set<() => void>();
