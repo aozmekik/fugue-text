@@ -138,7 +138,23 @@ function buildBase(steps: readonly BaseStep[]): FugueText {
   return base;
 }
 
-const word = fc.string({ minLength: 1, maxLength: 6, unit: fc.constantFrom('X', 'Y', 'Z') });
+/** Each typist types from its own alphabet, so every character reveals who typed it. */
+const ALPHABETS = ['ABC', 'DEF', 'GHI'] as const;
+
+const typists = fc.integer({ min: 2, max: 3 }).chain((count) =>
+  fc.record({
+    words: fc.tuple(
+      ...ALPHABETS.slice(0, count).map((alphabet) =>
+        fc.string({ minLength: 1, maxLength: 6, unit: fc.constantFrom(...codeUnits(alphabet)) }),
+      ),
+    ),
+    // Replica IDs in random order relative to the alphabets.
+    ids: fc.uniqueArray(fc.stringMatching(/^[a-z]{1,3}$/), {
+      minLength: count,
+      maxLength: count,
+    }),
+  }),
+);
 
 describe('non-interleaving properties', () => {
   for (const [name, type] of [
@@ -150,13 +166,11 @@ describe('non-interleaving properties', () => {
         fc.property(
           baseDocument,
           fc.double({ min: 0, max: 1, maxExcluded: true, noNaN: true }),
-          fc.array(word, { minLength: 2, maxLength: 3 }),
-          (steps, position, words) => {
+          typists,
+          (steps, position, { words, ids }) => {
             const base = buildBase(steps);
             const state = base.save();
-            const replicas = words.map((_, i) =>
-              FugueText.load(state, { replicaId: `typist${String(i)}` }),
-            );
+            const replicas = ids.map((replicaId) => FugueText.load(state, { replicaId }));
             const index = Math.floor(position * (base.length + 1));
             const ops = replicas.map((replica, i) => type(replica, index, words[i] as string));
             for (const replica of replicas) for (const batch of ops) deliver(batch, replica);
@@ -165,19 +179,22 @@ describe('non-interleaving properties', () => {
               expect(replica.toString()).toBe(result);
               checkInvariants(replica);
             }
-            // The words appear as contiguous blocks, in some order, at `index`.
+            // The base text is untouched around the insertion point...
             const before = base.toString().slice(0, index);
             const after = base.toString().slice(index);
             expect(result.startsWith(before) && result.endsWith(after)).toBe(true);
-            let middle = result.slice(before.length, result.length - after.length);
-            const remaining = [...words];
-            while (middle.length > 0) {
-              const next = remaining.findIndex((w) => middle.startsWith(w));
-              expect(next).toBeGreaterThanOrEqual(0);
-              middle = middle.slice((remaining[next] as string).length);
-              remaining.splice(next, 1);
-            }
-            expect(remaining).toEqual([]);
+            const middle = result.slice(before.length, result.length - after.length);
+            expect(middle.length).toBe(words.join('').length);
+            // ...and each typist's characters form one block that spells that typist's word.
+            words.forEach((word, i) => {
+              const alphabet = ALPHABETS[i] as string;
+              const positions = codeUnits(middle).flatMap((ch, j) =>
+                alphabet.includes(ch) ? [j] : [],
+              );
+              const first = positions[0] as number;
+              expect(positions).toEqual(Array.from({ length: word.length }, (_, k) => first + k));
+              expect(middle.slice(first, first + word.length)).toBe(word);
+            });
           },
         ),
         { numRuns },
