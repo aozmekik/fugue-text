@@ -55,8 +55,9 @@ Option 3.
   per edit staying in the low microseconds from 1,000 to 1,000,000 characters (see the README).
 - Placing a _concurrent_ remote insertion may walk `leftmost`/`rightmost` paths, which costs O(d)
   where d is the number of runs on that path. For non-concurrent insertions (the common case)
-  these walks stop immediately, because the parent has no other children on that side. Very deep trees (for example 20,000 prepended characters) are handled
-  iteratively and are covered by a test.
+  these walks stop immediately, because the parent has no other children on that side. Very deep
+  trees (for example 20,000 prepended characters) are handled iteratively and are covered by a
+  test.
 - Two structures must stay consistent. `FugueList.checkInvariants` verifies, among other things,
   that the rope order equals an in-order traversal of the tree, that segments are maximal and that
   runs are maximal chains; the property tests call it after every step.

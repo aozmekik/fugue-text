@@ -18,8 +18,8 @@ whose in-order traversal is the document. This library implements that algorithm
 engineering a real editor needs: fast index lookups on long documents, run-length encoding,
 causal delivery, state merging, compact encodings, stable cursors and change events. It has no
 runtime dependencies and uses no platform-specific APIs. The test suite was run locally on
-Node.js 22.22.3 and is set up to run in CI on Node.js 22 and 24; the browser example was checked
-by hand in Chrome 152.
+Node.js 22.22.3 and is set up to run in CI on Node.js 22 and 24; the browser example was tried in
+three tabs of Chromium 152 (concurrent typing, caret preservation and a late-joining tab).
 
 ## Features
 
@@ -159,16 +159,19 @@ Design decisions and their trade-offs are recorded as ADRs:
 - **Structure**: a model-based test of the B-tree, and an invariant check (rope order equals the
   tree traversal, maximal segments and runs, sorted siblings) after every property-test step.
 
-Coverage from `npm run test:coverage` on the same setup: 99.83% of lines, 97.09% of branches and
-100% of functions in `src/` (excluding `src/types.ts`, which only declares types). Property tests draw new random inputs on each run, so branch
-coverage varies by a fraction of a percent between runs.
+Coverage from `npm run test:coverage` on the same setup: 99.83% of lines, 97.51% of branches and
+100% of functions in `src/` (excluding `src/types.ts`, which only declares types). Property tests
+draw new random inputs on each run, so coverage varies by a fraction of a percent between runs.
+Each property runs 200 cases by default; a soak run with `FC_NUM_RUNS=20000` (20,000 cases per
+property, 102 s) also passed.
 
 ## Benchmarks
 
-All numbers below were measured on an Apple M1 Pro (8 cores, 16 GB) running macOS 26.6, Node.js
-22.22.3 (V8 12.4), Yjs 13.6.33, on 2026-10-18. Other jobs were running on the machine at the same
-time (load average between 14 and 28 during the runs), so expect noticeable noise; the raw
-durations of every run are written to `bench/out/`.
+All numbers below were measured on 2026-10-18 on an Apple M1 Pro (8 cores, 16 GB) running macOS
+26.6.2, Node.js 22.22.3 (V8 12.4; the benchmarks run TypeScript through tsx 4.23.15) and Yjs
+13.6.33. Other jobs were running on the machine at the same time (1-minute load average between
+12 and 42 during the runs), so expect noticeable noise; the raw duration of every run is written
+to `bench/out/`.
 
 ### Real editing trace
 
@@ -180,35 +183,37 @@ after 2 warm-up runs. Retained heap is measured in a fresh process per library a
 
 | Metric                                                  | fugue-text | Yjs 13.6.33                    |
 | ------------------------------------------------------- | ---------- | ------------------------------ |
-| Local replay, edits/s                                   | 3,261,945  | 224,398                        |
-| Remote replay from binary messages, edits/s             | 879,711    | 280,196                        |
-| Remote replay from in-memory operation objects, edits/s | 2,908,940  | n/a (updates are binary)       |
-| Save full state, ms                                     | 4.0        | 4.4                            |
-| Load full state, ms                                     | 13.7       | 16.4                           |
+| Local replay, edits/s                                   | 2,848,587  | 229,404                        |
+| Remote replay from binary messages, edits/s             | 836,438    | 249,862                        |
+| Remote replay from in-memory operation objects, edits/s | 2,682,390  | n/a (updates are binary)       |
+| Save full state, ms                                     | 4.6        | 2.8                            |
+| Load full state, ms                                     | 21.4       | 10.3                           |
 | Encoded state, bytes                                    | 176,415    | 223,414 (v2 encoding: 159,921) |
 | Encoded state after gzip, bytes                         | 80,574     | 99,895                         |
 | State as JSON, bytes                                    | 1,539,776  | n/a                            |
 | Operations or updates, binary, bytes per edit           | 18.8       | 14.7                           |
-| Retained heap after replay, bytes                       | 4,950,384  | 3,164,928                      |
+| Retained heap after replay, bytes                       | 4,934,464  | 3,466,656                      |
 
 The trace produced 6,288 runs and 12,487 segments in fugue-text. Across the 7 runs, local replay
-took 73.7 to 103.9 ms for fugue-text and 1,141 to 1,246 ms for Yjs; save and load times varied by
-more than 2x for both libraries (for example 2.6 to 8.5 ms to save in fugue-text), so they do not
-rank the two libraries.
+took 77.6 to 111.9 ms for fugue-text and 1,026 to 1,261 ms for Yjs. Save and load times varied by
+a factor of 3 to 6 between runs for both libraries (for example 10.2 to 33.4 ms to load in
+fugue-text and 6.9 to 22.6 ms in Yjs), so read them as orders of magnitude, not as a ranking.
+Decoding binary operations dominates the binary remote replay: applying the same operations as
+objects is about 3 times faster.
 
 ### Cost per edit versus document size (synthetic)
 
 `npm run bench:scaling` builds documents from random typing bursts (synthetic data), then times
 10,000 random single-character edits (alternating insert and delete at uniformly random
 positions) on fresh copies; median of 5 repetitions. The naive reference implementation from the
-test suite (O(n) per edit) shows what the B-tree avoids.
+test suite (O(n) per edit, a single run of 500 edits) shows what the B-tree avoids.
 
 | Document length | fugue-text local, ns/edit | fugue-text remote, ns/edit | Yjs local, ns/edit | Naive reference, ns/edit |
 | --------------- | ------------------------- | -------------------------- | ------------------ | ------------------------ |
-| 1,005           | 883                       | 1,495                      | 5,382              | 96,305                   |
-| 10,002          | 893                       | 908                        | 8,209              | 470,705                  |
-| 100,004         | 1,426                     | 1,639                      | 39,222             | not run (O(n))           |
-| 1,000,005       | 6,423                     | 4,799                      | 407,787            | not run (O(n))           |
+| 1,005           | 717                       | 630                        | 4,508              | 60,584                   |
+| 10,002          | 810                       | 923                        | 8,134              | 510,344                  |
+| 100,004         | 1,558                     | 1,691                      | 51,895             | not run (O(n))           |
+| 1,000,005       | 3,284                     | 3,811                      | 409,329            | not run (O(n))           |
 
 ### Caveats
 
@@ -218,8 +223,9 @@ and each `Y.Text` edit here runs in its own transaction with that machinery; fug
 single-purpose plain-text CRDT without tombstone garbage collection. The trace is a single-user
 history, so it exercises sequential typing and never the concurrent-placement path. Uniformly
 random positions in the scaling benchmark defeat the locality that Yjs's position cache relies on
-and are not how people edit. Operation sizes depend on replica ID length (fugue-text sends the ID string in
-every operation; Yjs uses numeric client IDs). Results come from one machine under load.
+and are not how people edit. Operation sizes depend on replica ID length (fugue-text sends the
+ID string in every operation; Yjs uses numeric client IDs). Results come from one machine under
+load, from a single invocation of each benchmark.
 
 ## Examples
 
