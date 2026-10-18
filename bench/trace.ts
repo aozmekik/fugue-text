@@ -2,10 +2,11 @@
  * Replays the automerge-paper editing trace (259,778 single-character edits, see
  * bench/traces/README.md) through fugue-text and, for context, through Yjs.
  *
- * Run with `npm run bench` (BENCH_RUNS overrides the number of measured runs, default 5).
+ * Run with `npm run bench` (BENCH_RUNS overrides the number of measured runs, default 7).
  */
 
 import { execFileSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { gzipSync } from 'node:zlib';
 import * as Y from 'yjs';
 import { decodeOperation, encodeOperation, Text } from '../src/index.js';
@@ -18,6 +19,8 @@ import {
 import { environment, formatNumber, measure, median, table, writeResults } from './util.js';
 
 const runs = Number(process.env['BENCH_RUNS'] ?? 7);
+const yjsVersion = (createRequire(import.meta.url)('yjs/package.json') as { version: string })
+  .version;
 const trace = loadTrace();
 const patches = trace.patches;
 const replayFugue = () => replayFugueTrace(patches);
@@ -151,7 +154,7 @@ const results = {
     heapBytes: fugueHeap,
   },
   yjs: {
-    version: '13.6.33',
+    version: yjsVersion,
     updates: updates.length,
     localMs: yjsLocal,
     remoteMs: yjsRemote,
@@ -175,7 +178,20 @@ console.log(
 );
 console.log(`Measured runs per metric: ${String(runs)} (after 2 warm-up runs); medians reported`);
 console.log('Retained heap: measured once per library in a fresh process (bench/memory.ts)\n');
-console.log(table(['Metric', 'fugue-text', 'Yjs 13.6.33'], rows));
+console.log(table(['Metric', 'fugue-text', `Yjs ${yjsVersion}`], rows));
+
+// The machine may be shared, so show how much the measured runs varied.
+const range = (durations: number[]): string =>
+  `${formatNumber(Math.min(...durations), 1)} to ${formatNumber(Math.max(...durations), 1)}`;
+const rangeRows: string[][] = [
+  ['Local replay', range(fugueLocal), range(yjsLocal)],
+  ['Remote replay from binary messages', range(fugueRemoteBinary), range(yjsRemote)],
+  ['Remote replay from in-memory operation objects', range(fugueRemote), 'n/a'],
+  ['Save full state', range(fugueSave), range(yjsSave)],
+  ['Load full state', range(fugueLoad), range(yjsLoad)],
+];
+console.log(`\nRange over the ${String(runs)} measured runs, ms:\n`);
+console.log(table(['Metric', 'fugue-text', `Yjs ${yjsVersion}`], rangeRows));
 console.log(
   `\nfugue-text structure: ${formatNumber(ops.length)} operations, ${formatNumber(list.runCount)} runs, ${formatNumber(list.segmentCount)} segments`,
 );
