@@ -1,14 +1,15 @@
 /**
  * The replicated list itself: the Fugue tree of runs plus a rope of segments that holds the tree's
  * in-order traversal, so visible indexes and element IDs can be mapped to each other in
- * O(log n). This layer knows nothing about replicas' versions, causality or encodings; see
- * `Text` for those.
+ * O(log n). A per-replica index finds the segment containing an element by its counter. This
+ * layer knows nothing about replicas' versions, causality or encodings; see `FugueText` for those.
  */
 
 import { invalidState } from '../errors.js';
 import type { ElementId, ElementIdRange, Side, TextChange } from '../types.js';
 import { compareIds } from './ids.js';
 import { Rope, type RopeOptions, type RopePosition } from './rope.js';
+import { SortedIndex } from './sorted-index.js';
 import {
   addKid,
   type Elem,
@@ -64,7 +65,10 @@ export class FugueList {
   /** The virtual root of the Fugue tree. */
   readonly root: Run = Run.root();
   #rope: Rope<Segment>;
+  /** Each replica's runs, sorted by counter (only ever appended to). */
   readonly #runs = new Map<string, Run[]>();
+  /** Each replica's segments, keyed by the counter of their first element. */
+  readonly #segments = new Map<string, SortedIndex<Segment>>();
 
   /** @param options - Rope fan-out, overridable for tests. */
   constructor(options: RopeOptions = {}) {
@@ -196,13 +200,14 @@ export class FugueList {
         parent = { run: next.run, offset: next.offset };
         side = 'left';
       }
-      after = this.#splitAfter(left);
+      if (position.offset + 1 < segment.length) this.#split(segment, position.offset + 1);
+      after = segment;
     }
     const run = new Run(replica, counter, length, parent.run, parent.offset, side);
     addKid(parent.run, parent.offset, side, run);
     this.#register(run);
     const segment = new Segment(run, 0, length, text);
-    run.segments.push(segment);
+    this.#addSegment(segment);
     this.#rope.insertAfter(after, segment);
     return { parent: parent.run === this.root ? null : idOf(parent), side };
   }
@@ -331,7 +336,7 @@ export class FugueList {
         }
       } else {
         const segment = new Segment(run, offset, piece.length, piece.text);
-        run.segments.push(segment);
+        this.#addSegment(segment);
         this.#rope.insertAfter(previous, segment);
         previous = segment;
       }
@@ -394,7 +399,8 @@ export class FugueList {
           : other.parentIdOf(run);
       const parent = parentId === null ? this.rootElem : (this.resolve(parentId) as Elem);
       const side = have > 0 ? 'right' : run.side;
-      this.integrate(run.replica, run.counter + have, parent, side, piecesOf(run, have), changes);
+      const pieces = other.#piecesOf(run, have);
+      this.integrate(run.replica, run.counter + have, parent, side, pieces, changes);
     }
     for (const segment of other.#rope) {
       if (segment.text !== undefined) continue;
@@ -511,7 +517,9 @@ export class FugueList {
         continue;
       }
       const segment = new Segment(run, offset, length, record.text);
-      run.segments.push(segment);
+      if (!list.#addSegment(segment)) {
+        invalidState(`element ${replica}:${String(counter)} appears twice`);
+      }
       segments.push(segment);
     }
     for (const { run } of links) {
@@ -563,25 +571,37 @@ export class FugueList {
       if (!condition) throw new Error(`list invariant violated: ${what}`);
     };
     let segmentTotal = 0;
+    check(
+      [...this.#segments.keys()].every((replica) => this.#runs.has(replica)),
+      'segments belong to known replicas',
+    );
     for (const [replica, runs] of this.#runs) {
+      const index = this.#segments.get(replica);
+      check(index !== undefined, 'every replica has a segment index');
+      index?.checkInvariants();
+      const segments = index === undefined ? [] : [...index];
+      segmentTotal += segments.length;
+      let next = 0; // position in `segments`
       let end = -1;
       for (const run of runs) {
         check(run.replica === replica && run.counter > end, 'runs sorted and disjoint');
         end = run.counter + run.length - 1;
         let offset = 0;
-        for (const segment of run.segments) {
-          check(segment.run === run && segment.offset === offset, 'segments tile their run');
+        while (offset < run.length) {
+          const segment = segments[next++];
+          check(segment?.run === run && segment.offset === offset, 'segments tile their run');
+          if (segment === undefined) break;
           check(segment.length > 0, 'non-empty segment');
           check(segment.text === undefined || segment.text.length === segment.length, 'text size');
           offset += segment.length;
         }
         check(offset === run.length, 'segments cover their run');
-        segmentTotal += run.segments.length;
         for (const [slots, side] of [
           [run.leftKids, 'left'],
           [run.rightKids, 'right'],
         ] as const) {
           if (slots === undefined) continue;
+          slots.checkInvariants();
           let previousOffset = -1;
           for (const slot of slots) {
             check(slot.offset > previousOffset && slot.offset < run.length, 'slots sorted');
@@ -601,6 +621,7 @@ export class FugueList {
           }
         }
       }
+      check(next === segments.length, 'no segments outside runs');
     }
     check(segmentTotal === this.#rope.size, 'every segment is in the rope');
     let previous: Segment | undefined;
@@ -671,30 +692,40 @@ export class FugueList {
     return position;
   }
 
-  /** The segment containing element `offset` of `run`. */
+  /** The segment containing element `offset` of `run` (which must be a known element). */
   #segmentAt(run: Run, offset: number): Segment {
-    const segments = run.segments;
-    let lo = 0;
-    let hi = segments.length;
-    while (lo < hi) {
-      const mid = (lo + hi) >>> 1;
-      if ((segments[mid] as Segment).offset <= offset) lo = mid + 1;
-      else hi = mid;
-    }
-    return segments[lo - 1] as Segment;
+    return (this.#segments.get(run.replica) as SortedIndex<Segment>).floor(
+      run.counter + offset,
+    ) as Segment;
   }
 
-  /** Position of `segment` within its run's segment list. */
-  #segmentIndex(segment: Segment): number {
-    const segments = segment.run.segments;
-    let lo = 0;
-    let hi = segments.length;
-    while (lo < hi) {
-      const mid = (lo + hi) >>> 1;
-      if ((segments[mid] as Segment).offset < segment.offset) lo = mid + 1;
-      else hi = mid;
+  /** Adds a new segment to its replica's index; `false` if its first element is already there. */
+  #addSegment(segment: Segment): boolean {
+    const replica = segment.run.replica;
+    let index = this.#segments.get(replica);
+    if (index === undefined) {
+      index = new SortedIndex(segmentCounter);
+      this.#segments.set(replica, index);
     }
-    return lo;
+    return index.insert(segment);
+  }
+
+  /** The content of `run` from offset `from` onwards, as pieces of uniform visibility. */
+  #piecesOf(run: Run, from: number): Piece[] {
+    const index = this.#segments.get(run.replica) as SortedIndex<Segment>;
+    const pieces: Piece[] = [];
+    for (
+      let segment = index.floor(run.counter + from);
+      segment?.run === run;
+      segment = index.after(segmentCounter(segment))
+    ) {
+      const start = Math.max(segment.offset, from);
+      pieces.push({
+        length: segment.offset + segment.length - start,
+        text: segment.text?.slice(start - segment.offset),
+      });
+    }
+    return pieces;
   }
 
   /** Splits `segment` so that its first `at` elements stay; returns the new tail segment. */
@@ -711,7 +742,7 @@ export class FugueList {
     }
     segment.length = at;
     this.#rope.insertAfter(segment, tail);
-    segment.run.segments.splice(this.#segmentIndex(segment) + 1, 0, tail);
+    this.#addSegment(tail);
     return tail;
   }
 
@@ -756,7 +787,7 @@ export class FugueList {
 
   #removeSegment(segment: Segment): void {
     this.#rope.remove(segment);
-    segment.run.segments.splice(this.#segmentIndex(segment), 1);
+    (this.#segments.get(segment.run.replica) as SortedIndex<Segment>).remove(segment);
   }
 }
 
@@ -765,16 +796,9 @@ function clamp(value: number, max: number): number {
   return Math.min(Math.max(value, 0), max);
 }
 
-/** The content of `run` from offset `from` onwards, as pieces of uniform visibility. */
-function piecesOf(run: Run, from: number): Piece[] {
-  const pieces: Piece[] = [];
-  for (const segment of run.segments) {
-    const end = segment.offset + segment.length;
-    if (end <= from) continue;
-    const start = Math.max(segment.offset, from);
-    pieces.push({ length: end - start, text: segment.text?.slice(start - segment.offset) });
-  }
-  return pieces;
+/** Key of a segment in its replica's index: the counter of its first element. */
+function segmentCounter(segment: Segment): number {
+  return segment.run.counter + segment.offset;
 }
 
 /** The ID of an element (never the root). */

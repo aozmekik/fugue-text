@@ -13,6 +13,7 @@
 
 import { compareIds } from './ids.js';
 import type { RopeItem } from './rope.js';
+import { SortedIndex } from './sorted-index.js';
 import type { Side } from '../types.js';
 
 /** Children of one element of a run, on one side, sorted by ID. */
@@ -22,6 +23,11 @@ export interface KidSlot {
   /** Child runs (each attached by its first element), sorted by {@link compareIds}. */
   readonly runs: Run[];
 }
+
+/** The non-continuation children of a run's elements on one side, keyed by parent offset. */
+export type KidSlots = SortedIndex<KidSlot>;
+
+const slotOffset = (slot: KidSlot): number => slot.offset;
 
 /** A maximal chain of tree nodes created by one replica with consecutive counters. */
 export class Run {
@@ -40,12 +46,10 @@ export class Run {
   parentOffset: number;
   /** Side of the first element relative to its parent. */
   readonly side: Side;
-  /** Non-continuation left children, by parent offset. */
-  leftKids: KidSlot[] | undefined = undefined;
-  /** Non-continuation right children, by parent offset. */
-  rightKids: KidSlot[] | undefined = undefined;
-  /** The list segments covering this run, sorted by offset (empty for the root). */
-  readonly segments: Segment[] = [];
+  /** Non-continuation left children, by parent offset (created on first use). */
+  leftKids: KidSlots | undefined = undefined;
+  /** Non-continuation right children, by parent offset (created on first use). */
+  rightKids: KidSlots | undefined = undefined;
 
   constructor(
     replica: string,
@@ -77,8 +81,8 @@ export class Segment implements RopeItem {
   leaf: unknown = undefined;
   /** The run this segment belongs to. */
   readonly run: Run;
-  /** Offset of the first element within the run. */
-  offset: number;
+  /** Offset of the first element within the run. Never changes. */
+  readonly offset: number;
   /** Number of elements. */
   length: number;
   /** The characters, or `undefined` for tombstones. */
@@ -115,49 +119,51 @@ export interface ElemRange {
   readonly end: number;
 }
 
-/** Index of the first slot whose offset is `>= offset`. */
-function lowerBound(slots: readonly KidSlot[], offset: number): number {
+/** The children of element `offset` on the given slot list, or `undefined` if there are none. */
+export function kidsAt(slots: KidSlots | undefined, offset: number): Run[] | undefined {
+  return slots?.get(offset)?.runs;
+}
+
+/**
+ * Index of the first of the sorted `runs` whose first element's ID is greater than
+ * `(replica, counter)` (or not less than it, when `inclusive`); `runs.length` if there is none.
+ */
+function firstAbove(
+  runs: readonly Run[],
+  replica: string,
+  counter: number,
+  inclusive = false,
+): number {
   let lo = 0;
-  let hi = slots.length;
+  let hi = runs.length;
   while (lo < hi) {
     const mid = (lo + hi) >>> 1;
-    if ((slots[mid] as KidSlot).offset < offset) lo = mid + 1;
+    const run = runs[mid] as Run;
+    const order = compareIds(run.replica, run.counter, replica, counter);
+    if (order < 0 || (order === 0 && !inclusive)) lo = mid + 1;
     else hi = mid;
   }
   return lo;
 }
 
-/** The children of element `offset` on the given slot list, or `undefined` if there are none. */
-export function kidsAt(slots: readonly KidSlot[] | undefined, offset: number): Run[] | undefined {
-  if (slots === undefined) return undefined;
-  const slot = slots[lowerBound(slots, offset)];
-  return slot?.offset === offset ? slot.runs : undefined;
-}
-
-/** Attaches `kid` as a `side` child of element `(parent, offset)`, keeping siblings sorted. */
+/**
+ * Attaches `kid` as a `side` child of element `(parent, offset)`, keeping siblings sorted.
+ * O(log k) to find the slot, plus O(s) to insert among s existing siblings (s > 1 only with
+ * concurrent insertions at the same place).
+ */
 export function addKid(parent: Run, offset: number, side: Side, kid: Run): void {
   let slots = side === 'left' ? parent.leftKids : parent.rightKids;
   if (slots === undefined) {
-    slots = [];
+    slots = new SortedIndex(slotOffset);
     if (side === 'left') parent.leftKids = slots;
     else parent.rightKids = slots;
   }
-  const index = lowerBound(slots, offset);
-  const slot = slots[index];
-  if (slot?.offset !== offset) {
-    slots.splice(index, 0, { offset, runs: [kid] });
+  const slot = slots.get(offset);
+  if (slot === undefined) {
+    slots.insert({ offset, runs: [kid] });
     return;
   }
-  const runs = slot.runs;
-  let lo = 0;
-  let hi = runs.length;
-  while (lo < hi) {
-    const mid = (lo + hi) >>> 1;
-    const other = runs[mid] as Run;
-    if (compareIds(other.replica, other.counter, kid.replica, kid.counter) < 0) lo = mid + 1;
-    else hi = mid;
-  }
-  runs.splice(lo, 0, kid);
+  slot.runs.splice(firstAbove(slot.runs, kid.replica, kid.counter, true), 0, kid);
 }
 
 /** Whether element `(run, offset)` has at least one right child. */
@@ -179,13 +185,8 @@ export function successorSibling(
   let best: Elem | undefined;
   const kids = kidsAt(side === 'left' ? run.leftKids : run.rightKids, offset);
   if (kids !== undefined) {
-    // Few siblings in practice; a linear scan over a sorted array is fine.
-    for (const kid of kids) {
-      if (compareIds(kid.replica, kid.counter, replica, counter) > 0) {
-        best = { run: kid, offset: 0 };
-        break;
-      }
-    }
+    const kid = kids[firstAbove(kids, replica, counter)];
+    if (kid !== undefined) best = { run: kid, offset: 0 };
   }
   if (side === 'right' && offset < run.length - 1) {
     const next = run.counter + offset + 1;
@@ -211,15 +212,16 @@ export function leftmost(run: Run, offset: number): Elem {
 
 /**
  * The last element, in document order, of the subtree rooted at `(run, offset)`. Follows the
- * greatest right child repeatedly, skipping along a run in O(log k) per jump.
+ * greatest right child repeatedly. Within a run it finds the first child slot at or after the
+ * current offset in O(log k), then checks that run's later slots one by one: a slot whose
+ * greatest child sorts before the in-run continuation does not end the subtree.
  */
 export function rightmost(run: Run, offset: number): Elem {
   outer: for (;;) {
     const slots = run.rightKids;
     if (slots !== undefined) {
       const last = run.length - 1;
-      for (let i = lowerBound(slots, offset); i < slots.length; i++) {
-        const slot = slots[i] as KidSlot;
+      for (let slot = slots.ceiling(offset); slot !== undefined; slot = slots.after(slot.offset)) {
         const greatest = slot.runs[slot.runs.length - 1] as Run;
         if (
           slot.offset === last ||
@@ -290,19 +292,8 @@ export function* traverse(root: Run): Generator<ElemRange> {
       pushRuns(kids, 0, kids.length);
       continue;
     }
-    const continuation = run.counter + nextRight + 1;
-    let split = 0;
-    while (
-      split < kids.length &&
-      compareIds(
-        (kids[split] as Run).replica,
-        (kids[split] as Run).counter,
-        run.replica,
-        continuation,
-      ) < 0
-    ) {
-      split++;
-    }
+    // Kids that sort before the continuation come before it in document order.
+    const split = firstAbove(kids, run.replica, run.counter + nextRight + 1, true);
     pushRuns(kids, split, kids.length);
     stack.push({ run, offset: nextRight + 1, leftDone: false });
     pushRuns(kids, 0, split);
@@ -310,7 +301,6 @@ export function* traverse(root: Run): Generator<ElemRange> {
 }
 
 /** Offset of the first slot at or after `offset`, or `Infinity`. */
-function nextSlotOffset(slots: readonly KidSlot[] | undefined, offset: number): number {
-  if (slots === undefined) return Infinity;
-  return slots[lowerBound(slots, offset)]?.offset ?? Infinity;
+function nextSlotOffset(slots: KidSlots | undefined, offset: number): number {
+  return slots?.ceiling(offset)?.offset ?? Infinity;
 }
