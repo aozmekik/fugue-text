@@ -24,3 +24,15 @@ export function compareIds(
   if (replicaA !== replicaB) return replicaA < replicaB ? -1 : 1;
   return counterA - counterB;
 }
+
+/**
+ * Builds a version vector (or `deps`) object without a prototype, so that looking up a replica
+ * ID such as `constructor` or `__proto__` cannot return an inherited property.
+ */
+export function versionVector(
+  entries: Iterable<readonly [string, number]>,
+): Record<string, number> {
+  const vector = Object.create(null) as Record<string, number>;
+  for (const [replica, counter] of entries) vector[replica] = counter;
+  return vector;
+}

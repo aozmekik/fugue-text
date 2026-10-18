@@ -24,6 +24,7 @@ import {
   isElementIdRange,
   isObject,
   isReplicaId,
+  MAX_COUNTER,
 } from './internal/guards.js';
 import type {
   DeleteOperation,
@@ -51,6 +52,9 @@ export function assertOperation(value: unknown): asserts value is Operation {
   if (!isObject(deps)) invalidOperation('malformed deps');
   for (const [dep, version] of Object.entries(deps)) {
     if (!isReplicaId(dep) || !isCounter(version)) invalidOperation('malformed deps entry');
+    if (dep === replica && version > counter) {
+      invalidOperation('an operation cannot depend on later operations of its own replica');
+    }
   }
   if (type === 'insert') {
     const { parent, side, text } = value;
@@ -61,7 +65,7 @@ export function assertOperation(value: unknown): asserts value is Operation {
       invalidOperation('malformed parent');
     }
     if (typeof text !== 'string' || text.length === 0) invalidOperation('empty or missing text');
-    if (!Number.isSafeInteger(counter + text.length)) invalidOperation('counter overflow');
+    if (counter + text.length > MAX_COUNTER) invalidOperation('counter overflow');
   } else {
     const { targets } = value;
     if (!Array.isArray(targets) || targets.length === 0) invalidOperation('missing targets');
@@ -76,8 +80,41 @@ export function operationSpan(op: Operation): number {
   return op.type === 'insert' ? op.text.length : 1;
 }
 
-/** Encodes an operation in the compact binary format. */
+/** Whether two (valid) operations are identical, ignoring the order of `deps` entries. */
+export function sameOperation(a: Operation, b: Operation): boolean {
+  if (a.type !== b.type || a.replica !== b.replica || a.counter !== b.counter) return false;
+  const depsA = Object.entries(a.deps);
+  if (depsA.length !== Object.keys(b.deps).length) return false;
+  for (const [replica, version] of depsA) {
+    if (!Object.hasOwn(b.deps, replica) || b.deps[replica] !== version) return false;
+  }
+  if (a.type === 'insert') {
+    const other = b as InsertOperation;
+    return (
+      a.text === other.text &&
+      a.side === other.side &&
+      a.parent?.replica === other.parent?.replica &&
+      a.parent?.counter === other.parent?.counter
+    );
+  }
+  const targets = (b as DeleteOperation).targets;
+  return (
+    a.targets.length === targets.length &&
+    a.targets.every(
+      (target, i) =>
+        target.replica === targets[i]?.replica &&
+        target.counter === targets[i].counter &&
+        target.length === targets[i].length,
+    )
+  );
+}
+
+/**
+ * Encodes an operation in the compact binary format.
+ * @throws {FugueTextError} `invalid-operation` if `op` is malformed (see {@link assertOperation}).
+ */
 export function encodeOperation(op: Operation): Uint8Array<ArrayBuffer> {
+  assertOperation(op);
   const replicas = [op.replica];
   const indexOf = new Map([[op.replica, 0]]);
   const ref = (replica: string): number => {
@@ -139,8 +176,13 @@ export function decodeOperation(bytes: Uint8Array): Operation {
   const replica = replicaAt(0);
   const counter = input.uint();
   const depCount = input.uint();
-  const deps: [string, number][] = [];
-  for (let i = 0; i < depCount; i++) deps.push([replicaAt(input.uint()), input.uint()]);
+  if (depCount > bytes.length) fail('dependency count exceeds input size');
+  const deps = Object.create(null) as Record<string, number>;
+  for (let i = 0; i < depCount; i++) {
+    const dep = replicaAt(input.uint());
+    if (Object.hasOwn(deps, dep)) fail('duplicate dependency');
+    deps[dep] = input.uint();
+  }
   let op: Operation;
   if (tag === INSERT_TAG) {
     const parentHead = input.uint();
@@ -155,7 +197,7 @@ export function decodeOperation(bytes: Uint8Array): Operation {
       type: 'insert',
       replica,
       counter,
-      deps: Object.fromEntries(deps),
+      deps,
       parent,
       side,
       text,
@@ -175,7 +217,7 @@ export function decodeOperation(bytes: Uint8Array): Operation {
       type: 'delete',
       replica,
       counter,
-      deps: Object.fromEntries(deps),
+      deps,
       targets,
     } satisfies DeleteOperation;
   }

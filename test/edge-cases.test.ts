@@ -1,8 +1,20 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { FugueTextError, FugueText } from '../src/index.js';
+import { decodeOperation, encodeOperation, FugueText, FugueTextError } from '../src/index.js';
 import type { Operation, TextStateJSON } from '../src/index.js';
+import { MAX_COUNTER } from '../src/internal/guards.js';
+import { compareIds } from '../src/internal/ids.js';
 import { internalList } from '../src/text.js';
 import { checkInvariants } from './support/helpers.js';
+
+function codeOf(fn: () => unknown): string | undefined {
+  try {
+    fn();
+  } catch (error) {
+    if (error instanceof FugueTextError) return error.code;
+    throw error;
+  }
+  return undefined;
+}
 
 const op = (value: Operation | undefined): Operation => {
   if (value === undefined) throw new Error('expected an operation');
@@ -28,6 +40,20 @@ describe('edge cases', () => {
     expect(d.save()).toEqual(c.save());
     checkInvariants(c);
     checkInvariants(d);
+  });
+
+  it('places a concurrent right child before a run continuation with a greater ID', () => {
+    const c = new FugueText({ replicaId: 'c' });
+    const b = new FugueText({ replicaId: 'b' });
+    b.apply(op(c.insert(0, 'x')));
+    const fromB = op(b.insert(1, 'B')); // right child of c:0, b < c
+    const continuation = op(c.insert(1, 'y')); // c extends its run with c:1
+    c.apply(fromB);
+    b.apply(continuation);
+    expect(c.toString()).toBe('xBy');
+    expect(b.toString()).toBe('xBy');
+    checkInvariants(c);
+    checkInvariants(b);
   });
 
   it('rejects a state whose runs have no causal order', () => {
@@ -98,17 +124,74 @@ describe('edge cases', () => {
     const state: TextStateJSON = {
       format: 'fugue-text/state',
       formatVersion: 1,
-      version: { a: Number.MAX_SAFE_INTEGER },
+      version: { a: MAX_COUNTER },
       records: [],
     };
     const text = FugueText.load(state, { replicaId: 'a' });
-    expect(() => text.insert(0, 'xy')).toThrow(RangeError);
-    const full = FugueText.load(
-      { ...state, version: { a: Number.MAX_SAFE_INTEGER - 1 } },
-      { replicaId: 'a' },
-    );
+    expect(() => text.insert(0, 'x')).toThrow(RangeError);
+    expect(() => text.delete(0, 0)).not.toThrow();
+    const full = FugueText.load({ ...state, version: { a: MAX_COUNTER - 1 } }, { replicaId: 'a' });
     full.insert(0, 'x');
     expect(() => full.delete(0, 1)).toThrow(RangeError);
+    expect(codeOf(() => FugueText.load({ ...state, version: { a: MAX_COUNTER + 1 } }))).toBe(
+      'invalid-state',
+    );
+  });
+
+  it('round-trips states and operations at the largest counters', () => {
+    // Zigzag-encoded counter deltas must stay below the varint limit of 2^53 - 1.
+    const json: TextStateJSON = {
+      format: 'fugue-text/state',
+      formatVersion: 1,
+      version: { z: MAX_COUNTER, a: 3 },
+      records: [
+        // Typed before z:0 much later, so the next record's delta is -(2^52 - 1).
+        {
+          replica: 'z',
+          counter: MAX_COUNTER - 2,
+          length: 2,
+          parent: { replica: 'z', counter: 0 },
+          side: 'left',
+          text: 'qr',
+        },
+        { replica: 'z', counter: 0, length: 1, parent: null, side: 'right', text: 'p' },
+        {
+          replica: 'a',
+          counter: 0,
+          length: 3,
+          parent: { replica: 'z', counter: 0 },
+          side: 'right',
+        },
+      ],
+    };
+    const text = FugueText.load(json, { replicaId: 'reader' });
+    const bytes = text.save();
+    const copy = FugueText.load(bytes, { replicaId: 'copy' });
+    expect(copy.toString()).toBe('qrp');
+    expect(copy.save()).toEqual(bytes);
+    expect(copy.toJSON()).toEqual(json);
+    const insert = op(copy.insert(1, '!'));
+    expect(decodeOperation(encodeOperation(insert))).toEqual(insert);
+    const remote: Operation = {
+      type: 'insert',
+      replica: 'z',
+      counter: MAX_COUNTER - 1,
+      deps: {},
+      parent: null,
+      side: 'right',
+      text: 'x',
+    };
+    expect(codeOf(() => decodeOperation(encodeOperation({ ...remote, text: 'xy' })))).toBe(
+      'invalid-operation',
+    );
+    expect(decodeOperation(encodeOperation(remote))).toEqual(remote);
+  });
+
+  it('orders element IDs by replica ID, then counter', () => {
+    expect(compareIds('a', 9, 'b', 0)).toBeLessThan(0);
+    expect(compareIds('ab', 0, 'a', 9)).toBeGreaterThan(0);
+    expect(compareIds('a', 2, 'a', 5)).toBeLessThan(0);
+    expect(compareIds('a', 5, 'a', 5)).toBe(0);
   });
 
   it('needs crypto.getRandomValues only for random replica IDs', () => {

@@ -1,10 +1,12 @@
 /**
  * Public data types shared by the {@link FugueText} API, the operation format and the codecs.
  *
- * Every type here is a plain, JSON-serialisable value: you can `JSON.stringify` an operation, an
- * anchor or a version vector and send it over any transport.
+ * Every data type here is a plain, JSON-serialisable value: you can `JSON.stringify` an
+ * operation, an anchor or a version vector and send it over any transport.
  * @module
  */
+
+import type { FugueTextError } from './errors.js';
 
 /**
  * Identifies one replica (one editing session). Must be 1 to 64 printable ASCII characters
@@ -16,6 +18,7 @@ export type ReplicaId = string;
  * The globally unique identity of one element (one UTF-16 code unit) of a {@link FugueText}.
  *
  * Every replica numbers what it creates with a private counter, so `(replica, counter)` is unique.
+ * Counters, lengths and version-vector entries are integers from 0 to 2^52 - 1.
  */
 export interface ElementId {
   /** The replica that inserted the element. */
@@ -39,7 +42,10 @@ export type Side = 'left' | 'right';
 
 /**
  * Per-replica progress: for each replica, the next counter value this document expects from it.
- * Equivalently, the number of counter values of that replica it has already applied.
+ * Equivalently, the number of counter values of that replica it has already applied. Replicas
+ * that are absent count as 0. The objects this library creates have no prototype, so a lookup
+ * such as `version['constructor']` returns `undefined`; for objects parsed from JSON, check with
+ * `Object.hasOwn` first.
  */
 export type VersionVector = Readonly<Record<ReplicaId, number>>;
 
@@ -105,6 +111,12 @@ export type ApplyResult = 'applied' | 'buffered' | 'duplicate';
  *   anchor's position by anyone ends up after the anchor.
  * - `right`: the anchor stays immediately before the character on its right. Text inserted at the
  *   anchor's position ends up before the anchor.
+ *
+ * The bias holds while that character is visible. Once it is deleted, the anchor still resolves
+ * to the gap where the character was, but text inserted into that gap later may land on either
+ * side of it, because the anchor stays attached to the deleted character (Fugue places new text
+ * relative to it like any other tombstone). To keep the bias across deletions, re-create
+ * long-lived anchors after changes: `createAnchor(resolveAnchor(anchor), bias)`.
  */
 export type AnchorBias = 'left' | 'right';
 
@@ -164,6 +176,12 @@ export interface ChangeEvent {
 /** Receives {@link ChangeEvent}s; see {@link FugueText.subscribe}. */
 export type ChangeListener = (event: ChangeEvent) => void;
 
+/**
+ * Receives a buffered operation that was discarded because it turned out to be inconsistent with
+ * the document once its dependencies arrived; see {@link FugueTextOptions.onReject}.
+ */
+export type RejectListener = (error: FugueTextError, op: Operation) => void;
+
 /** Options for creating or loading a {@link FugueText}. */
 export interface FugueTextOptions {
   /**
@@ -171,6 +189,17 @@ export interface FugueTextOptions {
    * that contains every operation that ID has ever produced.
    */
   readonly replicaId?: ReplicaId;
+  /**
+   * Called for each buffered operation that is discarded when the delivery buffer is drained: an
+   * operation that waited for its dependencies and then turned out to be invalid (for example,
+   * it names a parent that does not exist). The operation is dropped and leaves the document
+   * unchanged, and the {@link FugueText.apply} or {@link FugueText.merge} call that triggered the
+   * drain still succeeds; operations that the discarded one would have unblocked stay buffered
+   * until a valid operation with the same ID, or a state that covers it, arrives. By default
+   * discarded operations are ignored; pass a callback to log them or to disconnect the sender.
+   * Exceptions thrown by the callback are reported asynchronously, like those of change listeners.
+   */
+  readonly onReject?: RejectListener;
 }
 
 /** One maximal run of the debug JSON state; see {@link TextStateJSON}. */
@@ -190,8 +219,8 @@ export interface StateRecordJSON {
 }
 
 /**
- * Human-readable form of a document state, produced by {@link FugueText.toJSON}. Records are listed in
- * document order and include deleted elements (without their text).
+ * Human-readable form of a document state, produced by {@link FugueText.toJSON}. Records are
+ * listed in document order and include deleted elements (without their text).
  */
 export interface TextStateJSON {
   /** Format marker. */

@@ -200,6 +200,22 @@ describe('FugueText: change events', () => {
     text.insert(0, 'x');
     expect(text.toString()).toBe('x!');
   });
+
+  it('delivers events caused by a listener after the current event reaches every listener', () => {
+    const a = new FugueText({ replicaId: 'a' });
+    const b = new FugueText({ replicaId: 'b' });
+    const origins: string[] = [];
+    b.subscribe((event) => {
+      origins.push(`first:${event.origin}`);
+      if (event.origin === 'remote') b.insert(0, '>'); // edits synchronously
+    });
+    const view = mirror(b); // registered after the editing listener
+    b.subscribe((event) => origins.push(`third:${event.origin}`));
+    b.apply(a.insert(0, 'hello') as Operation);
+    expect(b.toString()).toBe('>hello');
+    expect(view.value).toBe('>hello');
+    expect(origins).toEqual(['first:remote', 'third:remote', 'first:local', 'third:local']);
+  });
 });
 
 describe('FugueText: anchors', () => {
@@ -236,6 +252,23 @@ describe('FugueText: anchors', () => {
     text.insert(0, '__');
     expect(text.resolveAnchor(left)).toBe(3);
     expect(text.resolveAnchor(right)).toBe(4);
+  });
+
+  it('keeps its bias for later insertions only while its character is visible', () => {
+    const a = new FugueText({ replicaId: 'a' });
+    const b = new FugueText({ replicaId: 'b' });
+    b.apply(a.insert(0, 'abc') as Operation);
+    const caret = b.createAnchor(2, 'left'); // after 'b'
+    b.apply(a.delete(1, 1) as Operation);
+    expect(b.resolveAnchor(caret)).toBe(1);
+    // Re-creating the anchor attaches it to a visible character again ('a').
+    const refreshed = b.createAnchor(b.resolveAnchor(caret) as number, 'left');
+    b.apply(a.insert(1, 'XYZ') as Operation);
+    expect(b.toString()).toBe('aXYZc');
+    // Fugue puts the new text before the tombstone the stale anchor is attached to...
+    expect(b.resolveAnchor(caret)).toBe(4);
+    // ...while the refreshed anchor keeps its left bias.
+    expect(b.resolveAnchor(refreshed)).toBe(1);
   });
 
   it('collapses to the gap when its character is deleted', () => {

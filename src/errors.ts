@@ -9,8 +9,9 @@ export type FugueTextErrorCode = 'invalid-operation' | 'invalid-state' | 'replic
 
 /**
  * Thrown when input received from another replica (an operation or an encoded state) cannot be
- * accepted. The document is left unchanged by the rejected operation. Programming errors such as
- * an out-of-range index throw the built-in `RangeError` or `TypeError` instead.
+ * accepted. The call that throws leaves the document unchanged. Buffered operations that turn out
+ * to be invalid later are not thrown but passed to `FugueTextOptions.onReject`. Programming
+ * errors such as an out-of-range index throw the built-in `RangeError` or `TypeError` instead.
  */
 export class FugueTextError extends Error {
   /** Why the input was rejected. */

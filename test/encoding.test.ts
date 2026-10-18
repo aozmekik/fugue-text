@@ -2,7 +2,7 @@ import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import { ByteReader, ByteWriter, decodeWtf8, encodeWtf8 } from '../src/encoding/bytes.js';
 import { decodeOperation, encodeOperation, FugueTextError, FugueText } from '../src/index.js';
-import type { Operation, TextStateJSON } from '../src/index.js';
+import type { Operation, TextStateJSON, VersionVector } from '../src/index.js';
 import { checkInvariants, numRuns } from './support/helpers.js';
 
 const fail = (message: string): never => {
@@ -163,6 +163,27 @@ const randomDocument = fc
     return all[0] as FugueText;
   });
 
+describe('version vectors', () => {
+  it('have no prototype, so any replica ID can be looked up', () => {
+    // A computed key, as an application would use, so inherited members are not type-checked.
+    const entry = (vector: VersionVector, replica: string): unknown => vector[replica];
+    const a = new FugueText({ replicaId: 'constructor' });
+    const b = new FugueText({ replicaId: '__proto__' });
+    b.apply(a.insert(0, 'x') as Operation);
+    const fromB = b.insert(1, 'y') as Operation;
+    expect(entry(fromB.deps, 'constructor')).toBe(1);
+    expect(entry(b.version, 'toString')).toBeUndefined();
+    expect(entry(b.version, '__proto__')).toBe(1);
+    expect(entry(b.toJSON().version, 'hasOwnProperty')).toBeUndefined();
+    const decoded = decodeOperation(encodeOperation(fromB));
+    expect(entry(decoded.deps, 'constructor')).toBe(1);
+    expect(entry(decoded.deps, 'valueOf')).toBeUndefined();
+    a.apply(JSON.parse(JSON.stringify(fromB)) as Operation);
+    expect(a.toString()).toBe('xy');
+    expect(FugueText.load(b.toJSON()).version).toEqual(b.version);
+  });
+});
+
 describe('state codecs', () => {
   it('round-trips random documents through binary and JSON', () => {
     fc.assert(
@@ -243,6 +264,7 @@ describe('state codecs', () => {
       base([record(0, { text: 'xy' })]),
       base([record(0, { length: 0, text: '' })]),
       base([record(0), record(0)]), // duplicate element
+      base([record(0, { length: 2, text: 'xy' }), record(1)]), // overlapping runs
       base([record(0, { parent: { replica: 'b', counter: 3 } })]), // unknown parent
       base([record(1, { parent: { replica: 'a', counter: 0 } })]), // continuation without predecessor
       base([record(5)], { a: 3 }), // beyond version
@@ -313,6 +335,38 @@ describe('operation codec', () => {
       }),
       { numRuns: numRuns * 5 },
     );
+  });
+
+  it('refuses to encode malformed operations', () => {
+    const valid: Operation = {
+      type: 'insert',
+      replica: 'a',
+      counter: 0,
+      deps: {},
+      parent: null,
+      side: 'right',
+      text: 'x',
+    };
+    for (const counter of [-1, Number.NaN, 1.5]) {
+      expect(codeOf(() => encodeOperation({ ...valid, counter }))).toBe('invalid-operation');
+    }
+    expect(codeOf(() => encodeOperation({ ...valid, replica: '' }))).toBe('invalid-operation');
+  });
+
+  it('rejects duplicate dependencies', () => {
+    // tag, 2 replicas ("a", "b"), counter 0, 2 deps both on "b", root parent, text "x"
+    const bytes = Uint8Array.of(0x11, 2, 1, 0x61, 1, 0x62, 0, 2, 1, 1, 1, 2, 0, 1, 0x78);
+    expect(codeOf(() => decodeOperation(bytes))).toBe('invalid-operation');
+    const single = Uint8Array.of(0x11, 2, 1, 0x61, 1, 0x62, 0, 1, 1, 1, 0, 1, 0x78);
+    expect(decodeOperation(single)).toEqual({
+      type: 'insert',
+      replica: 'a',
+      counter: 0,
+      deps: { b: 1 },
+      parent: null,
+      side: 'right',
+      text: 'x',
+    });
   });
 
   it('rejects truncated and padded encodings', () => {

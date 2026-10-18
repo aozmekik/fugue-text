@@ -19,11 +19,15 @@
  * text                                (WTF-8, length-prefixed: all visible text, in order)
  * ```
  *
+ * Counters, lengths and version entries are at most 2^52 - 1, so every zigzag delta is below
+ * 2^53 and fits the varint reader's limit.
+ *
  * The encoding is deterministic: replicas holding the same state produce identical bytes.
  */
 
 import { invalidState } from '../errors.js';
-import { isCounter, isElementId, isObject, isReplicaId } from '../internal/guards.js';
+import { isCounter, isElementId, isObject, isReplicaId, MAX_COUNTER } from '../internal/guards.js';
+import { versionVector } from '../internal/ids.js';
 import type { SnapshotRecord } from '../internal/list.js';
 import type { ElementId, Side, StateRecordJSON, TextStateJSON } from '../types.js';
 import { ByteReader, ByteWriter, type FailFn } from './bytes.js';
@@ -92,7 +96,11 @@ export function decodeSnapshot(bytes: Uint8Array): DocumentSnapshot {
   }
   if (new Set(replicas).size !== replicas.length) fail('duplicate replica ID');
   const version = new Map<string, number>();
-  for (const replica of replicas) version.set(replica, input.uint());
+  for (const replica of replicas) {
+    const counter = input.uint();
+    if (counter > MAX_COUNTER) fail('version entry exceeds 2^52 - 1');
+    version.set(replica, counter);
+  }
   const recordCount = input.uint();
   if (recordCount > bytes.length) fail('record count exceeds input size');
   const replicaAt = (index: number): string =>
@@ -159,7 +167,7 @@ export function decodeSnapshot(bytes: Uint8Array): DocumentSnapshot {
 
 /** Converts a snapshot to the JSON state format. */
 export function snapshotToJSON(snapshot: DocumentSnapshot): TextStateJSON {
-  const version = Object.fromEntries(
+  const version = versionVector(
     replicaTable(snapshot).map((replica) => [replica, snapshot.version.get(replica) ?? 0]),
   );
   const records = snapshot.records.map((record): StateRecordJSON => {

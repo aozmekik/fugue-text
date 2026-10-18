@@ -3,7 +3,7 @@ import { FugueTextError, FugueText } from '../src/index.js';
 import type { InsertOperation, Operation } from '../src/index.js';
 import { checkInvariants } from './support/helpers.js';
 
-const op = (value: Operation | undefined): Operation => {
+const op = <T extends Operation>(value: T | undefined): T => {
   if (value === undefined) throw new Error('expected an operation');
   return value;
 };
@@ -206,23 +206,109 @@ describe('operation-based sync', () => {
     rejects(() => a1.apply(foreign), 'replica-conflict');
   });
 
-  it('keeps operations applied before a buffered operation turned out to be invalid', () => {
+  it('rejects an operation that differs from a buffered one with the same ID', () => {
     const a = new FugueText({ replicaId: 'a' });
     const b = new FugueText({ replicaId: 'b' });
-    const first = op(a.insert(0, 'ok'));
-    const broken: Operation = {
+    a.insert(0, 'x');
+    const second = op(a.insert(1, 'y'));
+    expect(b.apply({ ...second, text: 'EVIL' })).toBe('buffered');
+    rejects(() => b.apply(second), 'invalid-operation');
+    expect(b.pendingCount).toBe(1);
+  });
+
+  it('compares buffered operations field by field, ignoring the order of deps', () => {
+    const c = new FugueText({ replicaId: 'c' });
+    const a = new FugueText({ replicaId: 'a' });
+    a.insert(0, 'abc');
+    c.apply(op(new FugueText({ replicaId: 'x' }).insert(0, 'x')));
+    c.apply(op(new FugueText({ replicaId: 'y' }).insert(0, 'y')));
+    c.insert(0, 'c'); // c now has counter 1
+    const removal = op(a.delete(0, 2));
+    const insertion: InsertOperation = {
+      type: 'insert',
+      replica: 'c',
+      counter: 1,
+      deps: { x: 1, y: 1 },
+      parent: null,
+      side: 'right',
+      text: 'q',
+    };
+    const b = new FugueText({ replicaId: 'b' });
+    expect(b.apply(removal)).toBe('buffered');
+    expect(b.apply(insertion)).toBe('buffered');
+    expect(b.apply({ ...insertion, deps: { y: 1, x: 1 } })).toBe('duplicate');
+    const variants: Operation[] = [
+      { ...insertion, deps: { x: 1 } },
+      { ...insertion, deps: { x: 1, z: 1 } },
+      { ...insertion, deps: { x: 1, y: 2 } },
+      { ...insertion, side: 'left', parent: { replica: 'x', counter: 0 } },
+      { ...insertion, parent: { replica: 'x', counter: 0 } },
+      { ...removal, targets: [{ replica: 'a', counter: 0, length: 1 }] },
+      { ...removal, targets: [{ replica: 'a', counter: 1, length: 2 }] },
+      { ...removal, deps: { q: 1 } },
+      {
+        type: 'insert',
+        replica: 'a',
+        counter: 3,
+        deps: {},
+        parent: null,
+        side: 'right',
+        text: 'z',
+      },
+    ];
+    for (const variant of variants) rejects(() => b.apply(variant), 'invalid-operation');
+    expect(b.pendingCount).toBe(2);
+  });
+
+  it('rejects dependencies on operations this replica never produced', () => {
+    const b = new FugueText({ replicaId: 'b' });
+    b.insert(0, 'own');
+    const forged: Operation = {
       type: 'insert',
       replica: 'a',
-      counter: 2,
-      deps: {},
-      parent: { replica: 'nobody', counter: 0 },
+      counter: 0,
+      deps: { b: 4 }, // b has only produced counters 0..2
+      parent: null,
       side: 'right',
       text: 'x',
     };
-    expect(b.apply(broken)).toBe('buffered');
-    rejects(() => b.apply(first), 'invalid-operation');
-    expect(b.toString()).toBe('ok');
+    rejects(() => b.apply(forged), 'replica-conflict');
+    expect(b.apply({ ...forged, deps: { b: 3 } })).toBe('applied');
+  });
+
+  it('rejects operations that claim to depend on their own later operations', () => {
+    const b = new FugueText({ replicaId: 'b' });
+    const forged: Operation = {
+      type: 'insert',
+      replica: 'a',
+      counter: 0,
+      deps: { a: 1 },
+      parent: null,
+      side: 'right',
+      text: 'x',
+    };
+    rejects(() => b.apply(forged), 'invalid-operation');
     expect(b.pendingCount).toBe(0);
+  });
+
+  it('applies long dependency chains delivered in reverse', () => {
+    // Replica i depends on replica i - 1, so only the last delivery makes anything ready.
+    const count = 3000;
+    const ops = Array.from({ length: count }, (_, i): Operation => ({
+      type: 'insert',
+      replica: `r${String(i)}`,
+      counter: 0,
+      deps: i === 0 ? {} : { [`r${String(i - 1)}`]: 1 },
+      parent: null,
+      side: 'right',
+      text: 'x',
+    }));
+    const target = new FugueText({ replicaId: 'target' });
+    for (const operation of ops.slice(1).reverse())
+      expect(target.apply(operation)).toBe('buffered');
+    expect(target.apply(ops[0] as Operation)).toBe('applied');
+    expect(target.pendingCount).toBe(0);
+    expect(target.length).toBe(count);
   });
 
   it('round-trips operations through JSON', () => {
@@ -232,5 +318,97 @@ describe('operation-based sync', () => {
       b.apply(JSON.parse(JSON.stringify(value)) as Operation);
     }
     expect(b.toString()).toBe(a.toString());
+  });
+});
+
+describe('invalid buffered operations', () => {
+  /** `a` types "ok"; `broken` is a forged next operation of `a` with an unknown parent. */
+  function setup(onReject?: (error: FugueTextError, rejected: Operation) => void) {
+    const a = new FugueText({ replicaId: 'a' });
+    const c = new FugueText({ replicaId: 'c' });
+    const r = new FugueText(
+      onReject === undefined ? { replicaId: 'r' } : { replicaId: 'r', onReject },
+    );
+    const first = op(a.insert(0, 'ok'));
+    const genuine = op(a.insert(2, '!'));
+    const broken: Operation = { ...genuine, parent: { replica: 'nobody', counter: 0 } };
+    c.apply(first);
+    const fromC = op(c.insert(0, '>')); // depends on `first` only
+    return { a, r, first, genuine, broken, fromC };
+  }
+
+  it('are discarded and reported while other buffered operations keep draining', () => {
+    const reported: [string, Operation][] = [];
+    const { r, first, broken, fromC } = setup((error, rejected) => {
+      reported.push([error.code, rejected]);
+    });
+    expect(r.apply(broken)).toBe('buffered');
+    expect(r.apply(fromC)).toBe('buffered');
+    expect(r.apply(first)).toBe('applied'); // the caller's own operation is fine
+    expect(r.toString()).toBe('>ok');
+    expect(r.version).toEqual({ a: 2, c: 1 });
+    expect(r.pendingCount).toBe(0);
+    expect(reported).toEqual([['invalid-operation', broken]]);
+  });
+
+  it('do not block a valid operation with the same ID that arrives later', () => {
+    const { a, r, first, genuine, broken } = setup();
+    const after = op(a.insert(3, '?')); // waits for a:2
+    r.apply(broken);
+    r.apply(after);
+    r.apply(first);
+    expect(r.toString()).toBe('ok');
+    expect(r.pendingCount).toBe(1); // `after` still waits for a:2
+    expect(r.apply(genuine)).toBe('applied');
+    expect(r.toString()).toBe('ok!?');
+    expect(r.pendingCount).toBe(0);
+  });
+
+  it('are reported, not thrown, when a merge unblocks them', () => {
+    const reported: Operation[] = [];
+    const { r, first, broken } = setup((_error, rejected) => reported.push(rejected));
+    r.apply(broken);
+    const peer = new FugueText({ replicaId: 'peer' });
+    peer.apply(first);
+    r.merge(peer.save()); // covers a:0..1, so `broken` (a:2) becomes ready and fails
+    expect(r.toString()).toBe('ok');
+    expect(r.pendingCount).toBe(0);
+    expect(reported).toEqual([broken]);
+  });
+
+  it('are dropped without a report when a merge already covers them', () => {
+    const reported: Operation[] = [];
+    const { a, r, genuine } = setup((_error, rejected) => reported.push(rejected));
+    expect(r.apply(genuine)).toBe('buffered');
+    r.merge(a.save()); // contains a:0..2, including `genuine`
+    expect(r.toString()).toBe('ok!');
+    expect(r.pendingCount).toBe(0);
+    expect(reported).toEqual([]);
+  });
+
+  it('are rejected when they overlap an operation applied before them', () => {
+    const reported: Operation[] = [];
+    const { r, first, genuine } = setup((_error, rejected) => reported.push(rejected));
+    const overlapping: Operation = { ...genuine, counter: 3, text: 'qq' }; // a:3..4 overlaps a:2..3
+    const wide: Operation = { ...genuine, text: '!!' }; // a:2..3
+    r.apply(overlapping);
+    r.apply(wide);
+    r.apply(first);
+    expect(r.toString()).toBe('ok!!');
+    expect(r.pendingCount).toBe(0);
+    expect(reported).toEqual([overlapping]);
+  });
+
+  it('report exceptions thrown by onReject asynchronously', async () => {
+    const failure = new Error('handler failed');
+    const reported = new Promise<unknown>((resolve) => {
+      process.once('uncaughtException', resolve);
+    });
+    const { r, first, broken } = setup(() => {
+      throw failure;
+    });
+    r.apply(broken);
+    expect(r.apply(first)).toBe('applied');
+    await expect(reported).resolves.toBe(failure);
   });
 });
