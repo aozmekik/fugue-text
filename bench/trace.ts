@@ -2,7 +2,8 @@
  * Replays the automerge-paper editing trace (259,778 single-character edits, see
  * bench/traces/README.md) through fugue-text and, for context, through Yjs.
  *
- * Run with `npm run bench` (BENCH_RUNS overrides the number of measured runs, default 7).
+ * Run with `npm run bench` (BENCH_RUNS overrides the number of measured runs, default 7; the
+ * retained heap is measured in as many fresh processes).
  */
 
 import { execFileSync } from 'node:child_process';
@@ -27,17 +28,20 @@ const patches = trace.patches;
 const replayFugue = () => replayFugueTrace(patches);
 const replayYjs = (onUpdate?: (update: Uint8Array) => void) => replayYjsTrace(patches, onUpdate);
 
-/** Retained heap of each library's document, each measured in its own fresh process. */
-function retainedHeap(library: 'fugue-text' | 'yjs'): number {
+/**
+ * Retained heap of a library's document in bytes, measured `count` times, each time in its own
+ * fresh process (bench/memory.ts). The result varies slightly between processes.
+ */
+function retainedHeap(library: 'fugue-text' | 'yjs', count: number): number[] {
   const script = fileURLToPath(new URL('./memory.ts', import.meta.url));
-  const output = execFileSync(
-    process.execPath,
-    ['--expose-gc', '--import', 'tsx', script, library],
-    {
-      encoding: 'utf8',
-    },
-  );
-  return (JSON.parse(output) as { bytes: number }).bytes;
+  return Array.from({ length: count }, () => {
+    const output = execFileSync(
+      process.execPath,
+      ['--expose-gc', '--import', 'tsx', script, library],
+      { encoding: 'utf8' },
+    );
+    return (JSON.parse(output) as { bytes: number }).bytes;
+  });
 }
 
 function check(condition: boolean, what: string): void {
@@ -66,7 +70,7 @@ const fugueRemoteBinary = measure(() => {
 }, runs);
 const fugueSave = measure(() => fugue.save(), runs);
 const fugueLoad = measure(() => FugueText.load(fugueState), runs);
-const fugueHeap = retainedHeap('fugue-text');
+const fugueHeap = retainedHeap('fugue-text', runs);
 const list = internalList(fugue);
 
 // --- Yjs -------------------------------------------------------------------------------------
@@ -85,7 +89,7 @@ const yjsLoad = measure(() => {
   const doc = new Y.Doc();
   Y.applyUpdate(doc, yjsState);
 }, runs);
-const yjsHeap = retainedHeap('yjs');
+const yjsHeap = retainedHeap('yjs', runs);
 const checkDoc = new Y.Doc();
 Y.applyUpdate(checkDoc, yjsState);
 check(checkDoc.getText('text').toJSON() === trace.endContent, 'Yjs load');
@@ -130,7 +134,7 @@ const rows: string[][] = [
     formatNumber(sum(updates) / updates.length, 1),
   ],
   ['All operations as JSON, bytes', bytes(opJsonBytes), 'n/a'],
-  ['Retained heap after replay, bytes', bytes(fugueHeap), bytes(yjsHeap)],
+  ['Retained heap after replay, bytes (median)', bytes(median(fugueHeap)), bytes(median(yjsHeap))],
 ];
 
 const results = {
@@ -178,20 +182,23 @@ console.log(
     .join(', ')}`,
 );
 console.log(`Measured runs per metric: ${String(runs)} (after 2 warm-up runs); medians reported`);
-console.log('Retained heap: measured once per library in a fresh process (bench/memory.ts)\n');
+console.log(
+  `Retained heap: measured in ${String(runs)} fresh processes per library (bench/memory.ts); medians reported\n`,
+);
 console.log(table(['Metric', 'fugue-text', `Yjs ${yjsVersion}`], rows));
 
 // The machine may be shared, so show how much the measured runs varied.
-const range = (durations: number[]): string =>
-  `${formatNumber(Math.min(...durations), 1)} to ${formatNumber(Math.max(...durations), 1)}`;
+const range = (values: number[], digits = 1): string =>
+  `${formatNumber(Math.min(...values), digits)} to ${formatNumber(Math.max(...values), digits)}`;
 const rangeRows: string[][] = [
-  ['Local replay', range(fugueLocal), range(yjsLocal)],
-  ['Remote replay from binary messages', range(fugueRemoteBinary), range(yjsRemote)],
-  ['Remote replay from in-memory operation objects', range(fugueRemote), 'n/a'],
-  ['Save full state', range(fugueSave), range(yjsSave)],
-  ['Load full state', range(fugueLoad), range(yjsLoad)],
+  ['Local replay, ms', range(fugueLocal), range(yjsLocal)],
+  ['Remote replay from binary messages, ms', range(fugueRemoteBinary), range(yjsRemote)],
+  ['Remote replay from in-memory operation objects, ms', range(fugueRemote), 'n/a'],
+  ['Save full state, ms', range(fugueSave), range(yjsSave)],
+  ['Load full state, ms', range(fugueLoad), range(yjsLoad)],
+  ['Retained heap after replay, bytes', range(fugueHeap, 0), range(yjsHeap, 0)],
 ];
-console.log(`\nRange over the ${String(runs)} measured runs, ms:\n`);
+console.log(`\nRange over the ${String(runs)} measured runs:\n`);
 console.log(table(['Metric', 'fugue-text', `Yjs ${yjsVersion}`], rangeRows));
 console.log(
   `\nfugue-text structure: ${formatNumber(ops.length)} operations, ${formatNumber(list.runCount)} runs, ${formatNumber(list.segmentCount)} segments`,
