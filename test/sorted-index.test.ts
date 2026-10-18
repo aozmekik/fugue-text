@@ -86,6 +86,21 @@ describe('SortedIndex', () => {
     expect(index.get(7)?.key).toBe(7);
   });
 
+  it('moves its head to the next leaf when the first leaf empties', () => {
+    const index = new SortedIndex(keyOf, { leafCapacity: 4, branchCapacity: 3 });
+    const items = Array.from({ length: 40 }, (_, i) => ({ key: i }));
+    for (const item of items) index.insert(item);
+    for (const [removed, item] of items.entries()) {
+      index.remove(item);
+      index.checkInvariants();
+      const rest = items.slice(removed + 1);
+      expect([...index]).toEqual(rest);
+      expect(index.ceiling(0)).toBe(rest[0]);
+      expect(index.floor(item.key)).toBeUndefined();
+    }
+    expect(index.size).toBe(0);
+  });
+
   it('refuses to remove a missing key', () => {
     const index = new SortedIndex(keyOf);
     index.insert({ key: 1 });

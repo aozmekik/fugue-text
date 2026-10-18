@@ -301,6 +301,7 @@ describe('FugueText: anchors', () => {
     a.insert(0, 'x');
     const anchor = a.createAnchor(1, 'left');
     expect(b.resolveAnchor(anchor)).toBeUndefined();
+    expect(() => b.resolveAnchor(null as never)).toThrow(TypeError);
     expect(() => b.resolveAnchor({ type: 'nope' } as never)).toThrow(TypeError);
     expect(() =>
       b.resolveAnchor({ type: 'element', id: { replica: '', counter: 0 }, bias: 'left' }),

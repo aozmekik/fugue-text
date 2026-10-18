@@ -155,6 +155,13 @@ describe('operation-based sync', () => {
         deps: {},
         targets: [{ replica: 'a', counter: 0, length: 0 }],
       },
+      {
+        type: 'delete',
+        replica: 'a',
+        counter: 0,
+        deps: {},
+        targets: [{ replica: '', counter: 0, length: 1 }],
+      },
     ];
     for (const value of malformed) rejects(() => b.apply(value as Operation), 'invalid-operation');
     expect(b.toString()).toBe('base');
@@ -309,6 +316,16 @@ describe('operation-based sync', () => {
     expect(target.apply(ops[0] as Operation)).toBe('applied');
     expect(target.pendingCount).toBe(0);
     expect(target.length).toBe(count);
+  });
+
+  it('ignores inherited properties of deps', () => {
+    const a = new FugueText({ replicaId: 'a' });
+    const b = new FugueText({ replicaId: 'b' });
+    const insert = op(a.insert(0, 'x'));
+    // Only own entries are dependencies; an inherited one must not make b wait for replica z.
+    const deps = Object.assign(Object.create({ z: 5 }) as Record<string, number>, insert.deps);
+    expect(b.apply({ ...insert, deps })).toBe('applied');
+    expect(b.toString()).toBe('x');
   });
 
   it('round-trips operations through JSON', () => {

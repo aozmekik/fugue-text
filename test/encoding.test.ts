@@ -3,7 +3,8 @@ import { describe, expect, it } from 'vitest';
 import { ByteReader, ByteWriter, decodeWtf8, encodeWtf8 } from '../src/encoding/bytes.js';
 import { decodeOperation, encodeOperation, FugueTextError, FugueText } from '../src/index.js';
 import type { Operation, TextStateJSON, VersionVector } from '../src/index.js';
-import { checkInvariants, numRuns } from './support/helpers.js';
+import { MAX_COUNTER } from '../src/internal/guards.js';
+import { checkInvariants, fuzzNumRuns, numRuns } from './support/helpers.js';
 
 const fail = (message: string): never => {
   throw new Error(message);
@@ -212,7 +213,7 @@ describe('state codecs', () => {
           if (code !== undefined) expect(code).toBe('invalid-state');
         }
       }),
-      { numRuns: numRuns * 5 },
+      { numRuns: fuzzNumRuns },
     );
   });
 
@@ -230,7 +231,7 @@ describe('state codecs', () => {
         if (code !== undefined) expect(code).toBe('invalid-state');
         if (loaded !== undefined) checkInvariants(loaded);
       }),
-      { numRuns: numRuns * 5 },
+      { numRuns: fuzzNumRuns },
     );
   });
 
@@ -276,6 +277,40 @@ describe('state codecs', () => {
       expect(codeOf(() => FugueText.load(value as TextStateJSON))).toBe('invalid-state');
     }
     expect(codeOf(() => FugueText.load(Uint8Array.of(1, 2, 3)))).toBe('invalid-state');
+  });
+
+  it('names the problem in malformed records and binary headers', () => {
+    const state = (records: unknown[], version: unknown = { a: 10 }): unknown => ({
+      format: 'fugue-text/state',
+      formatVersion: 1,
+      version,
+      records,
+    });
+    const record = { replica: 'a', counter: 0, length: 1, parent: null, side: 'right', text: 'x' };
+    /** A binary state with the given replica table and version, and no records. */
+    const binary = (replicas: readonly string[], counters: readonly number[]): Uint8Array => {
+      const out = new ByteWriter();
+      for (const byte of [0x46, 0x55, 0x47, 0x53, 1]) out.byte(byte);
+      out.uint(replicas.length);
+      for (const replica of replicas) out.string(replica);
+      for (const counter of counters) out.uint(counter);
+      out.uint(0); // records
+      out.string(''); // text
+      return out.finish();
+    };
+    expect(binary([], [])).toEqual(new FugueText().save());
+    const cases: [unknown, RegExp][] = [
+      [state([], null), /JSON state: missing version/],
+      [state(['nope']), /JSON state: malformed record$/],
+      [state([{ ...record, side: 'up' }]), /JSON state: malformed side/],
+      [state([{ ...record, parent: { replica: 7, counter: 0 } }]), /JSON state: malformed parent/],
+      [binary(['a', 'a'], [1, 1]), /binary state: duplicate replica ID/],
+      [binary(['a'], [MAX_COUNTER + 1]), /binary state: version entry exceeds 2\^52 - 1/],
+    ];
+    for (const [value, message] of cases) {
+      expect(codeOf(() => FugueText.load(value as TextStateJSON))).toBe('invalid-state');
+      expect(() => FugueText.load(value as TextStateJSON)).toThrow(message);
+    }
   });
 });
 
@@ -333,7 +368,7 @@ describe('operation codec', () => {
           if (code !== undefined) expect(code).toBe('invalid-operation');
         }
       }),
-      { numRuns: numRuns * 5 },
+      { numRuns: fuzzNumRuns },
     );
   });
 
@@ -367,6 +402,23 @@ describe('operation codec', () => {
       side: 'right',
       text: 'x',
     });
+  });
+
+  it('rejects malformed replica tables, replica indexes and element counts', () => {
+    const cases: [Uint8Array, RegExp][] = [
+      [Uint8Array.of(0x11, 0), /malformed replica table/], // no replicas
+      [Uint8Array.of(0x11, 9, 1, 0x61), /malformed replica table/], // more replicas than bytes
+      // insert by "a", counter 0, claiming 100 dependencies in 6 bytes
+      [Uint8Array.of(0x11, 1, 1, 0x61, 0, 100), /dependency count exceeds input size/],
+      // insert by "a", counter 0, no deps, parent in replica 5 (2 * (5 + 1)): only 0 exists
+      [Uint8Array.of(0x11, 1, 1, 0x61, 0, 0, 12, 0, 1, 0x78), /replica index out of range/],
+      // delete by "a", counter 0, no deps, claiming 100 targets in 7 bytes
+      [Uint8Array.of(0x12, 1, 1, 0x61, 0, 0, 100), /target count exceeds input size/],
+    ];
+    for (const [bytes, message] of cases) {
+      expect(codeOf(() => decodeOperation(bytes))).toBe('invalid-operation');
+      expect(() => decodeOperation(bytes)).toThrow(message);
+    }
   });
 
   it('rejects truncated and padded encodings', () => {

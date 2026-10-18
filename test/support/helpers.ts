@@ -63,3 +63,10 @@ export function codeUnits(value: string): string[] {
 
 /** Number of property-test runs; raise with FC_NUM_RUNS for longer local soak runs. */
 export const numRuns = Number(process.env['FC_NUM_RUNS'] ?? 200);
+
+/**
+ * Number of runs for the decoder fuzzers, which feed random or corrupted bytes to the state and
+ * operation decoders. Each case is cheap and there are many ways to be malformed, so they run
+ * five times as many cases as the other properties (1,000 by default).
+ */
+export const fuzzNumRuns = numRuns * 5;

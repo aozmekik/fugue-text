@@ -21,6 +21,34 @@ const op = (value: Operation | undefined): Operation => {
   return value;
 };
 
+/** Every ordering of `items`. */
+function* permutations<T>(items: readonly T[]): Generator<T[]> {
+  if (items.length <= 1) {
+    yield [...items];
+    return;
+  }
+  for (let i = 0; i < items.length; i++) {
+    const rest = [...items.slice(0, i), ...items.slice(i + 1)];
+    for (const tail of permutations(rest)) yield [items[i] as T, ...tail];
+  }
+}
+
+/**
+ * Delivers `ops` to a fresh replica in every possible order (the delivery buffer holds back
+ * operations that arrive early) and checks that each ends with `expected` and the same state.
+ */
+function expectSameResultInEveryOrder(ops: readonly Operation[], expected: string): void {
+  let state: Uint8Array | undefined;
+  for (const order of permutations(ops)) {
+    const reader = new FugueText({ replicaId: 'reader' });
+    for (const operation of order) expect(reader.apply(operation)).not.toBe('duplicate');
+    expect(reader.toString()).toBe(expected);
+    checkInvariants(reader);
+    state ??= reader.save();
+    expect(reader.save()).toEqual(state);
+  }
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
 });
@@ -54,6 +82,35 @@ describe('edge cases', () => {
     expect(b.toString()).toBe('xBy');
     checkInvariants(c);
     checkInvariants(b);
+  });
+
+  it('places a right child before the smaller of a sibling run and the run continuation', () => {
+    // Right children of b:0 sort as a:0 < b:1 (the continuation) < c:0. When A arrives after y
+    // and C, both its greater siblings are candidates and the continuation must win.
+    const b = new FugueText({ replicaId: 'b' });
+    const a = new FugueText({ replicaId: 'a' });
+    const c = new FugueText({ replicaId: 'c' });
+    const x = op(b.insert(0, 'x'));
+    a.apply(x);
+    c.apply(x);
+    const ops = [x, op(c.insert(1, 'C')), op(b.insert(1, 'y')), op(a.insert(1, 'A'))];
+    expectSameResultInEveryOrder(ops, 'xAyC');
+  });
+
+  it('skips a mid-run right child that sorts before the continuation', () => {
+    // a:0 is a right child of b:1, which b concurrently continues with b:2 (a < b, so A comes
+    // first). C is a right child of b:0 that sorts after the continuation b:1, so it goes after
+    // the end of b:1's subtree, which is z, not A.
+    const b = new FugueText({ replicaId: 'b' });
+    const a = new FugueText({ replicaId: 'a' });
+    const c = new FugueText({ replicaId: 'c' });
+    const x = op(b.insert(0, 'x'));
+    const y = op(b.insert(1, 'y'));
+    c.apply(x);
+    a.apply(x);
+    a.apply(y);
+    const ops = [x, y, op(b.insert(2, 'z')), op(a.insert(2, 'A')), op(c.insert(1, 'C'))];
+    expectSameResultInEveryOrder(ops, 'xyAzC');
   });
 
   it('rejects a state whose runs have no causal order', () => {
@@ -118,6 +175,25 @@ describe('edge cases', () => {
     expect(text.toString()).toBe('abcd');
     expect(text.toJSON().records).toHaveLength(1);
     checkInvariants(text);
+    // The same records with the second one deleted, and with both deleted.
+    type StateRecord = TextStateJSON['records'][number];
+    const [first, second] = split.records as [StateRecord, StateRecord];
+    const deleted = (record: StateRecord): StateRecord => {
+      const copy = { ...record };
+      delete copy.text;
+      return copy;
+    };
+    const variants: [StateRecord[], string][] = [
+      [[first, deleted(second)], 'ab'],
+      [[deleted(first), deleted(second)], ''],
+    ];
+    for (const [records, expected] of variants) {
+      const loaded = FugueText.load({ ...split, records });
+      expect(loaded.toString()).toBe(expected);
+      // Visible and deleted halves stay separate records; two deleted halves merge into one.
+      expect(loaded.toJSON().records).toHaveLength(expected === '' ? 1 : 2);
+      checkInvariants(loaded);
+    }
   });
 
   it('guards against counter overflow', () => {
