@@ -7,6 +7,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
 import * as Y from 'yjs';
 import { decodeOperation, encodeOperation, FugueText } from '../src/index.js';
@@ -28,7 +29,7 @@ const replayYjs = (onUpdate?: (update: Uint8Array) => void) => replayYjsTrace(pa
 
 /** Retained heap of each library's document, each measured in its own fresh process. */
 function retainedHeap(library: 'fugue-text' | 'yjs'): number {
-  const script = new URL('./memory.ts', import.meta.url).pathname;
+  const script = fileURLToPath(new URL('./memory.ts', import.meta.url));
   const output = execFileSync(
     process.execPath,
     ['--expose-gc', '--import', 'tsx', script, library],

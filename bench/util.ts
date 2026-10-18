@@ -1,5 +1,6 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
+import { fileURLToPath } from 'node:url';
 
 /** Forces a full garbage collection; requires `node --expose-gc`. */
 export function collectGarbage(): void {
@@ -56,7 +57,7 @@ export function writeResults(name: string, data: unknown): string {
   mkdirSync(dir, { recursive: true });
   const file = new URL(`${name}.json`, dir);
   writeFileSync(file, `${JSON.stringify(data, null, 2)}\n`);
-  return file.pathname;
+  return fileURLToPath(file);
 }
 
 /** Renders rows as a Markdown table. */

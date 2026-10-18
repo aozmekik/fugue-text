@@ -15,7 +15,7 @@ coverage/
 .eslintcache
 .prettiercache
 
-# Benchmark scratch output (committed results live in bench/RESULTS.md)
+# Raw benchmark output (results are summarised in README.md)
 bench/out/
 
 # Logs
