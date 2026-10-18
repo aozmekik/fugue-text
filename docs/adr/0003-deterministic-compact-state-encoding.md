@@ -22,8 +22,8 @@ dependencies. A debugging format that humans can read is also useful.
 
 ## Decision
 
-Option 3 for the binary format (`Text.save`), and a JSON rendering of the same records
-(`Text.toJSON`). Details are documented at the top of `src/encoding/state.ts`. In addition:
+Option 3 for the binary format (`FugueText.save`), and a JSON rendering of the same records
+(`FugueText.toJSON`). Details are documented at the top of `src/encoding/state.ts`. In addition:
 
 - **Deterministic output.** Replicas holding the same state produce byte-identical encodings: the
   replica table is ordered by first appearance (then sorted), and records are canonical because
@@ -36,8 +36,14 @@ Option 3 for the binary format (`Text.save`), and a JSON rendering of the same r
   duplicate elements, unknown parents, elements beyond the version vector, records that are not in
   the tree's traversal order, and states that have no causal order. Malformed input raises
   `FugueTextError` with code `invalid-state`; fuzz tests check that no other exception escapes.
-- **Operations** use a similar binary layout (`encodeOperation`); their JSON form is the operation
-  object itself.
+- **Counter limit.** Counters, lengths and version entries are integers up to 2^52 - 1, in every
+  format and in the API. Zigzag-encoded differences of such counters stay below 2^53, the varint
+  reader's limit, so every state that loads also saves and loads again. Without the cap, JSON
+  could carry counters up to 2^53 - 1, whose binary encoding the reader rejects. Encoding the
+  sign separately from the magnitude would also have worked, but 2^52 counters per replica is
+  more than any document needs.
+- **Operations** use a similar binary layout (`encodeOperation`, which validates its input); their
+  JSON form is the operation object itself.
 
 ## Consequences
 

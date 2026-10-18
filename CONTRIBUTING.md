@@ -22,11 +22,17 @@ npm ci            # installs dev dependencies and builds dist/ (prepare script)
 | `npm run typecheck`                       | `tsc` for everything, and for `src/` alone without DOM or Node types     |
 | `npm run format` / `npm run format:check` | Prettier                                                                 |
 | `npm run build`                           | Builds `dist/` (ESM + type declarations) with tsup                       |
-| `npm run check`                           | Everything CI runs, in order                                             |
-| `npm run bench`                           | Editing-trace benchmark (fugue-text and Yjs)                             |
-| `npm run bench:scaling`                   | Cost per edit versus document size (takes about a minute)                |
+| `npm run check`                           | Everything CI runs, in order, except `check:package`                     |
+| `npm run check:package`                   | Installs the packed package in a fresh project (needs network access)    |
+| `npm run bench`                           | Editing-trace benchmark (fugue-text and Yjs), under a minute             |
+| `npm run bench:scaling`                   | Cost per edit versus document size, two to three minutes                 |
 | `npm run example:relay`                   | End-to-end WebSocket relay demo                                          |
 | `npm run example:browser`                 | Serves the two-tab demo on http://127.0.0.1:8787                         |
+
+`npm run check:package` packs the library and installs the tarball into a temporary project. It
+type-checks a strict consumer with TypeScript 5.7 (the oldest supported version), runs the README
+quick start from `scripts/consumer/` and loads the package with `require()`. Keep
+`scripts/consumer/quick-start.ts` identical to the quick start in the README.
 
 Property tests run 200 cases each by default. For a longer soak run:
 

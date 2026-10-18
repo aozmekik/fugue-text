@@ -39,22 +39,40 @@ Option 3.
   Unlisted entries are implied: the sender's previous operation was applied first (FIFO), and by
   induction the receiver already covers that operation's full dependencies. A replica loaded from a
   state starts by declaring its full version vector.
-- **Idempotence**: an operation whose counters are all below `version[sender]` is a duplicate;
-  one already in the buffer is a duplicate too.
-- **Buffering**: operations that are not ready wait in a per-sender map and are applied as soon as
-  they become ready (including after a state merge, which also drops buffered operations it made
-  redundant).
-- **Own-ID check**: an operation or state that claims this replica's ID with counters it has not
-  produced means the ID is used elsewhere; it is rejected with `replica-conflict`.
+- **Idempotence**: an operation whose counters are all below `version[sender]` is a duplicate, and
+  so is a second copy of a buffered operation. A _different_ operation with the ID of a buffered
+  one is rejected rather than treated as a duplicate.
+- **Buffering with wake lists**: an operation that is not ready waits in a min-heap for the first
+  condition it lacks, `version[r] >= v`. When a replica's version grows, only the operations
+  waiting for that replica are checked again, and each is either applied or filed under its next
+  missing condition. Draining therefore costs O(P · d log P) for P buffered operations with d
+  dependencies each. An earlier version rescanned every per-sender queue on every pass, which is
+  quadratic. In a one-off measurement on an Apple M1 Pro (load average 23 to 29), a chain of
+  16,000 operations from different replicas, each depending on the previous one and delivered in
+  reverse, took 20.8 s to drain with the rescans and 118 ms with wake lists. The test suite
+  drains a 3,000-operation chain. A merge re-files all buffered operations, drops those it made
+  redundant, and applies those it unblocked.
+- **Errors**: `apply` and `merge` throw only for their own argument, and then leave the document
+  unchanged. A buffered operation that turns out to be invalid once its dependencies arrive (for
+  example, its parent does not exist, or it overlaps applied operations) is dropped. It is passed
+  to the `onReject` option, and draining continues. Throwing at that point would blame the
+  caller's valid operation, which has already been applied, and would leave other ready
+  operations stuck.
+- **Own-ID checks**: an operation or state that claims this replica's ID with counters it has not
+  produced means the ID is used elsewhere, and is rejected with `replica-conflict`. So is an
+  operation whose `deps` claim that this replica is further ahead than it is.
 
 ## Consequences
 
 - Operations stay small: a keystroke without new dependencies shares one frozen empty `deps`
   object; the trace benchmark measures the encoded size per operation.
-- The `pendingCount` buffer is unbounded; an application that never delivers a missing operation
-  keeps the dependents buffered. A state merge resolves this.
+- The buffer is unbounded. An application that never delivers a missing operation keeps the
+  dependents buffered (`pendingCount`), and so does one whose missing operation was rejected,
+  until a valid operation with that ID or a state that covers it arrives. A state merge resolves
+  both.
 - Deletions consume a counter, so typing after a deletion elsewhere starts a new run instead of
   extending the previous one. The trace benchmark reports the resulting run count.
 - Replica IDs must be unique per live instance. The default random IDs (60 bits) make collisions
   negligible; reusing an ID is only safe when loading a state that contains everything that ID
-  produced.
+  produced. Collisions between two _other_ replicas are only detected when their operations
+  conflict with buffered ones; operations already applied are not compared.

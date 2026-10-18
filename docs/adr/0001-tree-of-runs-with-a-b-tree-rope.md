@@ -44,23 +44,59 @@ Option 3.
   and its segment in place (run-length encoding).
 - Remote insert: the new run goes right before the subtree of its next-greater sibling, or after
   the end of its parent's subtree (`rightmost`), or right before its parent (left children).
-  `leftmost`/`rightmost` jump from run to run, and skip along a run with a binary search over the
-  run's child slots.
-- ID to index: find the run by binary search in a per-replica array, the segment by binary search
-  in the run, then sum weights up the B-tree via back-pointers.
+  `leftmost`/`rightmost` jump from run to run. Within a run, `rightmost` finds the first child
+  slot at or after the current offset with a B+tree query, then checks that run's later slots one
+  by one.
+- ID to index: find the run by binary search in a per-replica array of runs, find the segment
+  with a floor query in the replica's segment index (below), then sum weights up the B-tree via
+  back-pointers.
+
+### Locating segments and child slots
+
+Edits cut runs into segments, and children hang off arbitrary elements of a run, so the list
+also needs "which segment holds element c?" and "which children does element c have?". Three
+layouts were tried during development:
+
+1. **Sorted arrays per run.** Fast for the usual one to three segments per run, but splitting a
+   segment and attaching a child call `Array.prototype.splice`, which is O(k) in the number of
+   pieces. After a single 1,000,000-character paste, 80,000 random one-character edits raised the
+   cost per edit from 6.5 µs (first 10,000 edits) to 292 µs (last 10,000).
+2. **A B+tree per run.** O(log k) per operation, and as fast as the arrays on the trace, but every
+   run then carries several index objects: 8.5 MB retained after replaying the automerge-paper
+   trace, against 4.9 MB for the arrays.
+3. **One set of B+trees per replica.** `SortedIndex` (in `src/internal/sorted-index.ts`) is a
+   B+tree keyed by integers. Each replica has three: its segments keyed by element counter, and its
+   left and right child slots keyed by the parent's counter. Every run points to its replica's
+   indexes.
+
+Layout 3 was chosen: 3.5 MB retained on the trace, O(log n) splits, merges and child insertions,
+and a cost per edit that stays flat inside long runs. The price is speed: replaying the trace
+takes about 20 to 30% longer than with the per-run arrays, because each lookup searches a larger
+tree. The leaves store keys next to items, avoid `splice`, and queries start from the leaf that
+answered the previous one, which keeps that overhead down. These comparisons come from interleaved
+runs of a scratch script (not kept in the repository) on an Apple M1 Pro under a load average of
+11 to 17, with each layout replaying the trace about 60 times. Treat them as approximate. The
+drift run of `npm run bench:scaling` shows the flat cost per edit of the chosen layout (see the
+README).
 
 ## Consequences
 
-- Local edits, ID lookups and index lookups are O(log n). The scaling benchmark measures the cost
-  per edit staying in the low microseconds from 1,000 to 1,000,000 characters (see the README).
-- Placing a _concurrent_ remote insertion may walk `leftmost`/`rightmost` paths, which costs O(d)
-  where d is the number of runs on that path. For non-concurrent insertions (the common case)
-  these walks stop immediately, because the parent has no other children on that side. Very deep
-  trees (for example 20,000 prepended characters) are handled iteratively and are covered by a
-  test.
+- Local edits, ID lookups and index lookups take O(log n) time (the B-tree fan-outs are
+  constants), including edits inside a run that has been cut into many segments.
+- Two cases cost more:
+  - Placing a _concurrent_ remote insertion may walk `leftmost`/`rightmost` paths. That costs
+    O(d) in the number d of runs on the path, plus the slot scan described above. For
+    non-concurrent insertions (the common case) these walks stop immediately, because the
+    parent has no other children on that side. Very deep trees (for example 20,000 prepended
+    characters) are handled iteratively and are covered by a test.
+  - Inserting a child among s siblings that share a parent and a side splices a sorted array,
+    which costs O(s). Honest replicas only create s > 1 through concurrent insertions at one
+    place, but a malicious peer can send thousands of siblings. Applications that accept
+    operations or states from untrusted peers should bound message sizes and rates.
 - Two structures must stay consistent. `FugueList.checkInvariants` verifies, among other things,
-  that the rope order equals an in-order traversal of the tree, that segments are maximal and that
-  runs are maximal chains; the property tests call it after every step.
+  that the rope order equals an in-order traversal of the tree, that segments are maximal, that
+  runs are maximal chains and that every index is a well-formed B+tree that agrees with the runs.
+  The property tests call it after every step.
 - Segments are canonical (maximal), which makes the encoded state deterministic (ADR 0003).
 - Tombstones are kept forever (no garbage collection yet); deleted segments drop their text but
   keep their length.
