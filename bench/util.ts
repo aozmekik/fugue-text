@@ -40,6 +40,11 @@ export function environment(): Record<string, string> {
     platform: `${os.platform()} ${os.release()} ${os.arch()}`,
     cpu: `${os.cpus()[0]?.model ?? 'unknown'} (${String(os.cpus().length)} logical cores)`,
     memory: `${String(Math.round(os.totalmem() / 2 ** 30))} GiB`,
+    // Other processes compete for the CPU on a shared machine; record how busy it was.
+    loadAverage: os
+      .loadavg()
+      .map((value) => value.toFixed(1))
+      .join(' '),
   };
 }
 
