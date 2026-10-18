@@ -1,9 +1,15 @@
 /**
  * Wire format shared by the relay and its clients: one binary WebSocket message per frame, whose
  * first byte says what follows.
+ *
+ * Both sides start with a STATE frame. The relay sends its state to every client that connects,
+ * and each client sends its own state to the relay. The client thereby passes on whatever the
+ * relay lacks: edits made while offline, or everything after the relay restarted. The relay
+ * forwards a client state that taught it something to the other clients. After that, both sides
+ * exchange OPERATION frames.
  */
 
-/** A full document state (`text.save()`), sent by the relay to every client that connects. */
+/** A full document state (`doc.save()`). */
 export const STATE = 0x01;
 /** One encoded operation (`encodeOperation`). */
 export const OPERATION = 0x02;

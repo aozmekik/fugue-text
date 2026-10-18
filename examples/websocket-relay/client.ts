@@ -5,51 +5,80 @@
 
 // In your own project: import { ... } from 'fugue-text';
 import { decodeOperation, encodeOperation, FugueText } from '../../src/index.js';
-import type { Operation } from '../../src/index.js';
+import type { Operation, VersionVector } from '../../src/index.js';
 import { frame, OPERATION, STATE, unframe } from './protocol.js';
 
 /** A connected replica. */
 export interface Client {
   /** The local replica. */
   readonly doc: FugueText;
-  /** Inserts locally and sends the operation. */
+  /** Inserts locally and sends the operation (if still connected). */
   insert(index: number, text: string): void;
-  /** Deletes locally and sends the operation. */
+  /** Deletes locally and sends the operation (if still connected). */
   delete(index: number, length: number): void;
   /** Resolves once the replica's version covers `version` (e.g. another client's). */
-  waitFor(version: Readonly<Record<string, number>>): Promise<void>;
-  /** Closes the connection. */
+  waitFor(version: VersionVector): Promise<void>;
+  /** Closes the connection. The document stays usable; pass it to `connect` to reconnect. */
   close(): void;
 }
 
-/** Connects to a relay and resolves once the initial state has been received. */
-export async function connect(url: string, replicaId?: string): Promise<Client> {
-  const doc = new FugueText(replicaId === undefined ? {} : { replicaId });
+/**
+ * Connects `doc` (by default a new, empty replica with a random ID) to a relay. Resolves once the
+ * relay's state has been merged, and rejects if the connection fails or the relay's state cannot
+ * be merged. To reconnect, pass the same document again: it keeps its own history, so edits made
+ * while disconnected reach the others through the state exchange. A new document must not reuse
+ * the ID of a replica that has already edited. If it does, the relay's state contains operations
+ * of that ID and the merge fails with `replica-conflict`.
+ */
+export async function connect(url: string, doc: FugueText = new FugueText()): Promise<Client> {
   const socket = new WebSocket(url);
   socket.binaryType = 'arraybuffer';
   const waiters = new Set<() => void>();
+  let settled = false; // whether the promise below has resolved or rejected
 
-  const ready = new Promise<void>((resolve, reject) => {
+  await new Promise<void>((resolve, reject) => {
+    const fail = (error: unknown): void => {
+      if (settled) console.error('fugue-text client: closing the connection:', error);
+      else reject(error instanceof Error ? error : new Error(String(error)));
+      settled = true;
+      socket.close();
+    };
+    socket.addEventListener('open', () => {
+      socket.send(frame(STATE, doc.save()));
+    });
     socket.addEventListener('error', () => {
-      reject(new Error(`cannot connect to ${url}`));
+      fail(new Error(`cannot connect to ${url}`));
+    });
+    socket.addEventListener('close', () => {
+      if (!settled) fail(new Error('the relay closed the connection before sending its state'));
     });
     socket.addEventListener('message', (event: MessageEvent<ArrayBuffer>) => {
       const { type, payload } = unframe(new Uint8Array(event.data));
-      if (type === STATE) {
-        doc.merge(payload);
+      try {
+        if (type === STATE) doc.merge(payload);
+        else if (type === OPERATION) doc.apply(decodeOperation(payload));
+        else throw new Error(`unknown frame type ${String(type)}`);
+      } catch (error) {
+        // For example, a relay state with operations of this replica's ID that `doc` lacks.
+        fail(error);
+        return;
+      }
+      if (!settled && type === STATE) {
+        settled = true;
         resolve();
-      } else if (type === OPERATION) {
-        doc.apply(decodeOperation(payload));
       }
       for (const check of [...waiters]) check();
     });
   });
-  await ready;
 
   const send = (op: Operation | undefined): void => {
-    if (op !== undefined) socket.send(frame(OPERATION, encodeOperation(op)));
+    // While disconnected, edits only change the document; the next connect() sends them along
+    // with the document's state.
+    if (op !== undefined && socket.readyState === WebSocket.OPEN) {
+      socket.send(frame(OPERATION, encodeOperation(op)));
+    }
   };
-  const covers = (version: Readonly<Record<string, number>>): boolean =>
+  const covers = (version: VersionVector): boolean =>
     Object.entries(version).every(([replica, counter]) => (doc.version[replica] ?? 0) >= counter);
 
   return {

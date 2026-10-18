@@ -11,7 +11,7 @@
  */
 
 // In your own project: import { ... } from 'fugue-text';
-import { decodeOperation, encodeOperation, FugueText } from '../../src/index.js';
+import { decodeOperation, encodeOperation, FugueText, FugueTextError } from '../../src/index.js';
 import { TextareaBinding } from './textarea-binding.js';
 
 type Message =
@@ -22,7 +22,12 @@ const textarea = document.querySelector('textarea');
 const status = document.querySelector('#status');
 if (textarea === null || status === null) throw new Error('missing elements');
 
-const doc = new FugueText(); // a fresh random replica ID per tab
+const doc = new FugueText({
+  // A fresh random replica ID per tab (the default).
+  onReject: (error, op) => {
+    console.warn(`discarded buffered operation ${op.replica}:${String(op.counter)}`, error);
+  },
+});
 const channel = new BroadcastChannel('fugue-text-demo');
 const post = (message: Message): void => {
   channel.postMessage(message);
@@ -42,11 +47,17 @@ function render(): void {
 channel.addEventListener('message', (event: MessageEvent<Message>) => {
   const message = event.data;
   received++;
-  if (message.type === 'op') {
-    binding.receive(decodeOperation(message.op));
-  } else {
-    binding.merge(message.state);
-    if (message.type === 'hello') post({ type: 'state', from: doc.replicaId, state: doc.save() });
+  try {
+    if (message.type === 'op') {
+      binding.receive(decodeOperation(message.op));
+    } else {
+      binding.merge(message.state);
+      if (message.type === 'hello') post({ type: 'state', from: doc.replicaId, state: doc.save() });
+    }
+  } catch (error) {
+    // A message this replica cannot accept; the document and the textarea are unchanged.
+    if (!(error instanceof FugueTextError)) throw error;
+    console.warn(`ignored a message from ${message.from}:`, error);
   }
   render();
 });

@@ -3,7 +3,10 @@
  *
  * Local typing is turned into insert/delete operations by diffing the textarea's value; remote
  * operations are applied to the document and rendered back into the textarea while the caret and
- * selection are kept in place with anchors, so text typed by others never moves your cursor.
+ * selection are kept in place with anchors. Text that others insert right at your caret goes
+ * after it (the caret's anchor sticks to the character on its left), so remote typing does not
+ * push your caret along. Anchors are taken fresh for every remote apply or merge, which keeps
+ * them attached to visible characters (see `AnchorBias` for why that matters).
  */
 
 // In your own project: import { FugueText, ... } from 'fugue-text';
@@ -70,12 +73,18 @@ export class TextareaBinding {
     textarea.addEventListener('input', this.#onInput);
   }
 
-  /** Applies an operation from another replica. */
+  /**
+   * Applies an operation from another replica.
+   * @throws {FugueTextError} if the operation is rejected; the textarea stays in sync.
+   */
   receive(op: Operation): void {
     this.#preservingSelection(() => this.#doc.apply(op));
   }
 
-  /** Merges a state from another replica. */
+  /**
+   * Merges a state from another replica.
+   * @throws {FugueTextError} if the state is rejected; the textarea stays in sync.
+   */
   merge(state: Uint8Array): void {
     this.#preservingSelection(() => {
       this.#doc.merge(state);
@@ -105,12 +114,18 @@ export class TextareaBinding {
     const start: Anchor = this.#doc.createAnchor(textarea.selectionStart, 'right');
     const end: Anchor = this.#doc.createAnchor(textarea.selectionEnd, 'left');
     const collapsed = textarea.selectionStart === textarea.selectionEnd;
-    change();
-    const text = this.#doc.toString();
-    if (text === textarea.value) return;
-    textarea.value = text;
-    const endIndex = this.#doc.resolveAnchor(end) ?? text.length;
-    const startIndex = collapsed ? endIndex : (this.#doc.resolveAnchor(start) ?? endIndex);
-    textarea.setSelectionRange(Math.min(startIndex, endIndex), endIndex);
+    try {
+      change();
+    } finally {
+      // Re-render even if the change threw, so the next keystroke is diffed against the
+      // document's real text rather than a stale copy.
+      const text = this.#doc.toString();
+      if (text !== textarea.value) {
+        textarea.value = text;
+        const endIndex = this.#doc.resolveAnchor(end) ?? text.length;
+        const startIndex = collapsed ? endIndex : (this.#doc.resolveAnchor(start) ?? endIndex);
+        textarea.setSelectionRange(Math.min(startIndex, endIndex), endIndex);
+      }
+    }
   }
 }
