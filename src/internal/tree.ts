@@ -7,8 +7,13 @@
  * then right children (sorted by ID). Sequential typing produces chains in which every character
  * is the right child of the previous one; a {@link Run} stores such a maximal chain of
  * consecutive counters from one replica as a single object. Element `j + 1` of a run is the
- * "continuation" right child of element `j`; any other children of element `j` are listed in the
- * run's {@link KidSlot}s.
+ * "continuation" right child of element `j`; any other children of element `j` are listed in
+ * {@link KidSlot}s.
+ *
+ * Each replica's runs share one {@link ReplicaIndex}: B+trees, keyed by element counter, of the
+ * replica's list segments and child slots. Keeping them per replica rather than per run costs
+ * one pointer per run, and still gives O(log n) lookups inside a run that has been cut into many
+ * pieces.
  */
 
 import { compareIds } from './ids.js';
@@ -16,18 +21,26 @@ import type { RopeItem } from './rope.js';
 import { SortedIndex } from './sorted-index.js';
 import type { Side } from '../types.js';
 
-/** Children of one element of a run, on one side, sorted by ID. */
+/** Non-continuation children of one element, on one side, sorted by ID. */
 export interface KidSlot {
-  /** Offset of the parent element within its run. */
-  readonly offset: number;
+  /** Counter of the parent element. */
+  readonly counter: number;
   /** Child runs (each attached by its first element), sorted by {@link compareIds}. */
   readonly runs: Run[];
 }
 
-/** The non-continuation children of a run's elements on one side, keyed by parent offset. */
-export type KidSlots = SortedIndex<KidSlot>;
+const slotCounter = (slot: KidSlot): number => slot.counter;
+const segmentCounter = (segment: Segment): number => segment.run.counter + segment.offset;
 
-const slotOffset = (slot: KidSlot): number => slot.offset;
+/** Lookup structures for the elements of one replica, shared by all of its runs. */
+export class ReplicaIndex {
+  /** The replica's list segments, keyed by the counter of their first element. */
+  readonly segments = new SortedIndex<Segment>(segmentCounter);
+  /** Left children, keyed by the counter of the parent element. */
+  readonly leftKids = new SortedIndex<KidSlot>(slotCounter);
+  /** Right children other than run continuations, keyed by the parent's counter. */
+  readonly rightKids = new SortedIndex<KidSlot>(slotCounter);
+}
 
 /** A maximal chain of tree nodes created by one replica with consecutive counters. */
 export class Run {
@@ -46,10 +59,8 @@ export class Run {
   parentOffset: number;
   /** Side of the first element relative to its parent. */
   readonly side: Side;
-  /** Non-continuation left children, by parent offset (created on first use). */
-  leftKids: KidSlots | undefined = undefined;
-  /** Non-continuation right children, by parent offset (created on first use). */
-  rightKids: KidSlots | undefined = undefined;
+  /** The creator's segments and child slots (shared by all of the creator's runs). */
+  readonly index: ReplicaIndex;
 
   constructor(
     replica: string,
@@ -58,6 +69,7 @@ export class Run {
     parent: Run | undefined,
     parentOffset: number,
     side: Side,
+    index: ReplicaIndex,
   ) {
     this.replica = replica;
     this.counter = counter;
@@ -65,11 +77,12 @@ export class Run {
     this.parent = parent;
     this.parentOffset = parentOffset;
     this.side = side;
+    this.index = index;
   }
 
   /** Creates the virtual root: one element that is never visible and is not part of the list. */
   static root(): Run {
-    return new Run('', 0, 1, undefined, 0, 'right');
+    return new Run('', 0, 1, undefined, 0, 'right', new ReplicaIndex());
   }
 }
 
@@ -119,9 +132,40 @@ export interface ElemRange {
   readonly end: number;
 }
 
-/** The children of element `offset` on the given slot list, or `undefined` if there are none. */
-export function kidsAt(slots: KidSlots | undefined, offset: number): Run[] | undefined {
-  return slots?.get(offset)?.runs;
+/** The child slots of `run`'s replica on `side`. */
+function slotsOf(run: Run, side: Side): SortedIndex<KidSlot> {
+  return side === 'left' ? run.index.leftKids : run.index.rightKids;
+}
+
+/** The `side` children of element `(run, offset)`, or `undefined` if there are none. */
+export function kidsAt(run: Run, offset: number, side: Side): Run[] | undefined {
+  return slotsOf(run, side).get(run.counter + offset)?.runs;
+}
+
+/** The `side` child slots of `run`'s elements, in offset order. */
+export function slotsIn(run: Run, side: Side): KidSlot[] {
+  const slots = slotsOf(run, side);
+  const end = run.counter + run.length;
+  const found: KidSlot[] = [];
+  for (
+    let slot = slots.ceiling(run.counter);
+    slot !== undefined && slot.counter < end;
+    slot = slots.after(slot.counter)
+  ) {
+    found.push(slot);
+  }
+  return found;
+}
+
+/**
+ * Offset of the first element of `run`, at or after `offset`, that has `side` children, or
+ * `Infinity`.
+ */
+function nextSlotOffset(run: Run, offset: number, side: Side): number {
+  const slot = slotsOf(run, side).ceiling(run.counter + offset);
+  return slot !== undefined && slot.counter < run.counter + run.length
+    ? slot.counter - run.counter
+    : Infinity;
 }
 
 /**
@@ -152,15 +196,11 @@ function firstAbove(
  * concurrent insertions at the same place).
  */
 export function addKid(parent: Run, offset: number, side: Side, kid: Run): void {
-  let slots = side === 'left' ? parent.leftKids : parent.rightKids;
-  if (slots === undefined) {
-    slots = new SortedIndex(slotOffset);
-    if (side === 'left') parent.leftKids = slots;
-    else parent.rightKids = slots;
-  }
-  const slot = slots.get(offset);
+  const slots = slotsOf(parent, side);
+  const counter = parent.counter + offset;
+  const slot = slots.get(counter);
   if (slot === undefined) {
-    slots.insert({ offset, runs: [kid] });
+    slots.insert({ counter, runs: [kid] });
     return;
   }
   slot.runs.splice(firstAbove(slot.runs, kid.replica, kid.counter, true), 0, kid);
@@ -168,7 +208,7 @@ export function addKid(parent: Run, offset: number, side: Side, kid: Run): void 
 
 /** Whether element `(run, offset)` has at least one right child. */
 export function hasRightChild(run: Run, offset: number): boolean {
-  return offset < run.length - 1 || kidsAt(run.rightKids, offset) !== undefined;
+  return offset < run.length - 1 || kidsAt(run, offset, 'right') !== undefined;
 }
 
 /**
@@ -183,7 +223,7 @@ export function successorSibling(
   counter: number,
 ): Elem | undefined {
   let best: Elem | undefined;
-  const kids = kidsAt(side === 'left' ? run.leftKids : run.rightKids, offset);
+  const kids = kidsAt(run, offset, side);
   if (kids !== undefined) {
     const kid = kids[firstAbove(kids, replica, counter)];
     if (kid !== undefined) best = { run: kid, offset: 0 };
@@ -203,7 +243,7 @@ export function successorSibling(
 /** The first element, in document order, of the subtree rooted at `(run, offset)`. */
 export function leftmost(run: Run, offset: number): Elem {
   for (;;) {
-    const kids = kidsAt(run.leftKids, offset);
+    const kids = kidsAt(run, offset, 'left');
     if (kids === undefined) return { run, offset };
     run = kids[0] as Run;
     offset = 0;
@@ -218,24 +258,21 @@ export function leftmost(run: Run, offset: number): Elem {
  */
 export function rightmost(run: Run, offset: number): Elem {
   outer: for (;;) {
-    const slots = run.rightKids;
-    if (slots !== undefined) {
-      const last = run.length - 1;
-      for (let slot = slots.ceiling(offset); slot !== undefined; slot = slots.after(slot.offset)) {
-        const greatest = slot.runs[slot.runs.length - 1] as Run;
-        if (
-          slot.offset === last ||
-          compareIds(
-            greatest.replica,
-            greatest.counter,
-            run.replica,
-            run.counter + slot.offset + 1,
-          ) > 0
-        ) {
-          run = greatest;
-          offset = 0;
-          continue outer;
-        }
+    const slots = run.index.rightKids;
+    const last = run.counter + run.length - 1;
+    for (
+      let slot = slots.ceiling(run.counter + offset);
+      slot !== undefined && slot.counter <= last;
+      slot = slots.after(slot.counter)
+    ) {
+      const greatest = slot.runs[slot.runs.length - 1] as Run;
+      if (
+        slot.counter === last ||
+        compareIds(greatest.replica, greatest.counter, run.replica, slot.counter + 1) > 0
+      ) {
+        run = greatest;
+        offset = 0;
+        continue outer;
       }
     }
     return { run, offset: run.length - 1 };
@@ -260,21 +297,21 @@ export function* traverse(root: Run): Generator<ElemRange> {
     for (let i = to - 1; i >= from; i--)
       stack.push({ run: runs[i] as Run, offset: 0, leftDone: false });
   };
-  const rootKids = kidsAt(root.rightKids, 0);
+  const rootKids = kidsAt(root, 0, 'right');
   if (rootKids !== undefined) pushRuns(rootKids, 0, rootKids.length);
 
   for (let frame = stack.pop(); frame !== undefined; frame = stack.pop()) {
     const { run, offset } = frame;
     if (!frame.leftDone) {
-      const leftKids = kidsAt(run.leftKids, offset);
+      const leftKids = kidsAt(run, offset, 'left');
       if (leftKids !== undefined) {
         stack.push({ run, offset, leftDone: true });
         pushRuns(leftKids, 0, leftKids.length);
         continue;
       }
     }
-    const nextLeft = nextSlotOffset(run.leftKids, offset + 1);
-    const nextRight = nextSlotOffset(run.rightKids, offset);
+    const nextLeft = nextSlotOffset(run, offset + 1, 'left');
+    const nextRight = nextSlotOffset(run, offset, 'right');
     if (nextLeft <= nextRight) {
       if (nextLeft === Infinity) {
         yield { run, start: offset, end: run.length };
@@ -287,7 +324,7 @@ export function* traverse(root: Run): Generator<ElemRange> {
     }
     // Element `nextRight` has extra right children, ordered around the continuation.
     yield { run, start: offset, end: nextRight + 1 };
-    const kids = kidsAt(run.rightKids, nextRight) as Run[];
+    const kids = kidsAt(run, nextRight, 'right') as Run[];
     if (nextRight === run.length - 1) {
       pushRuns(kids, 0, kids.length);
       continue;
@@ -298,9 +335,4 @@ export function* traverse(root: Run): Generator<ElemRange> {
     stack.push({ run, offset: nextRight + 1, leftDone: false });
     pushRuns(kids, 0, split);
   }
-}
-
-/** Offset of the first slot at or after `offset`, or `Infinity`. */
-function nextSlotOffset(slots: KidSlots | undefined, offset: number): number {
-  return slots?.ceiling(offset)?.offset ?? Infinity;
 }

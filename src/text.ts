@@ -373,7 +373,11 @@ export class FugueText {
       return op.counter + operationSpan(op) <= applied ? 'duplicate' : 'overlap';
     }
     if (applied < op.counter) return { replica: op.replica, counter: op.counter };
-    for (const [replica, version] of Object.entries(op.deps)) {
+    const deps = op.deps;
+    // for...in avoids allocating entry arrays on this hot path; skip inherited keys.
+    for (const replica in deps) {
+      if (!Object.hasOwn(deps, replica)) continue;
+      const version = deps[replica] as number;
       if (this.#versionOf(replica) < version) return { replica, counter: version };
     }
     return 'ready';
