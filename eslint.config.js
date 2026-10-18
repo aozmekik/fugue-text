@@ -6,7 +6,10 @@ import jsdoc from 'eslint-plugin-jsdoc';
 import tseslint from 'typescript-eslint';
 
 export default defineConfig(
-  { ignores: ['dist/', 'coverage/', 'examples/**/bundle/', 'bench/out/'] },
+  {
+    // scripts/consumer/ is compiled against the packed package by scripts/check-package.sh.
+    ignores: ['dist/', 'coverage/', 'examples/**/bundle/', 'bench/out/', 'scripts/consumer/'],
+  },
   js.configs.recommended,
   tseslint.configs.strictTypeChecked,
   tseslint.configs.stylisticTypeChecked,
@@ -47,7 +50,7 @@ export default defineConfig(
     },
   },
   {
-    // Tests, benchmarks and examples may print and use non-null assertions sparingly.
+    // Tests, benchmarks and examples may print to the console.
     files: ['test/**/*.ts', 'bench/**/*.ts', 'examples/**/*.ts'],
     rules: { 'no-console': 'off' },
   },

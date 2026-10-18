@@ -41,6 +41,8 @@ jobs:
         run: npm run build
       - name: Check package contents
         run: npm pack --dry-run
+      - name: Install the packed package in a fresh project (TypeScript 5.7, quick start, require)
+        run: npm run check:package
       - name: Build the browser example
         run: npm run examples:build
       - name: Run the WebSocket relay example

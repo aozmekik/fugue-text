@@ -1,0 +1,5 @@
+{
+  "name": "fugue-text-consumer-check",
+  "private": true,
+  "type": "module"
+}

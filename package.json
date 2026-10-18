@@ -24,7 +24,8 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
     },
     "./package.json": "./package.json"
   },
@@ -48,9 +49,10 @@
     "bench": "node --expose-gc --import tsx bench/trace.ts",
     "bench:scaling": "node --expose-gc --import tsx bench/scaling.ts",
     "examples:build": "esbuild examples/broadcast-channel/main.ts --bundle --format=esm --target=es2022 --sourcemap --outfile=examples/broadcast-channel/bundle/main.js",
-    "example:browser": "npm run examples:build && esbuild --serve=8787 --servedir=examples/broadcast-channel",
+    "example:browser": "npm run examples:build && esbuild --serve=127.0.0.1:8787 --servedir=examples/broadcast-channel",
     "example:relay": "tsx examples/websocket-relay/demo.ts",
-    "check": "npm run format:check && npm run lint && npm run typecheck && npm run test:coverage && npm run build && npm run examples:build && npm run example:relay"
+    "check": "npm run format:check && npm run lint && npm run typecheck && npm run test:coverage && npm run build && npm pack --dry-run && npm run examples:build && npm run example:relay",
+    "check:package": "bash scripts/check-package.sh"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
