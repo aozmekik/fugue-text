@@ -8,9 +8,12 @@ updates:
       dev-dependencies:
         dependency-type: development
     ignore:
-      # typescript-eslint supports TypeScript < 6.1; bump TypeScript together with it by hand.
+      # typescript-eslint supports TypeScript < 6.1; upgrade both together.
       - dependency-name: typescript
         update-types: [version-update:semver-major, version-update:semver-minor]
+      # The types follow the oldest supported Node.js release (engines: >=22).
+      - dependency-name: '@types/node'
+        update-types: [version-update:semver-major]
   - package-ecosystem: github-actions
     directory: /
     schedule:
